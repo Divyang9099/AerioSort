@@ -100,6 +100,10 @@ export default function App() {
       alert('Create some towers first.')
       return
     }
+    const suggested = `${template.replace(/\s+/g, '_')}_towers`
+    const name = window.prompt('Enter ZIP file name:', suggested)
+    if (name === null) return // user cancelled
+    const zipName = (name.trim() || suggested) + (name.endsWith('.zip') ? '' : '.zip')
     setBusy(true)
     try {
       const zip = new JSZip()
@@ -123,7 +127,7 @@ export default function App() {
         if (imagesByTower(t.id).length === 0) folder.file('.keep', '')
       }
       const blob = await zip.generateAsync({ type: 'blob' })
-      saveAs(blob, `${template.replace(/\s+/g, '_')}_towers.zip`)
+      saveAs(blob, zipName)
     } finally {
       setBusy(false)
     }
