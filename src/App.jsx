@@ -104,19 +104,22 @@ export default function App() {
     try {
       const zip = new JSZip()
       for (const t of towers) {
-        const folder = zip.folder(t.id) // T1, T2, ... (every tower, even empty)
-        // remaining images that are still in the tower but not in any subfolder
+        const folder = zip.folder(t.id) // every tower, always
+        // remaining images not in any subfolder
         for (const img of imagesByTower(t.id).filter((i) => !i.subfolder)) {
           folder.file(img.name, img.file)
         }
-        // each subfolder
+        // always create every subfolder, with a .keep if empty
         for (const sf of subfolders) {
           const inSf = imagesInSubfolder(t.id, sf)
-          if (inSf.length === 0) continue
           const sub = folder.folder(sf)
-          for (const img of inSf) sub.file(img.name, img.file)
+          if (inSf.length === 0) {
+            sub.file('.keep', '') // keeps empty subfolder visible after extract
+          } else {
+            for (const img of inSf) sub.file(img.name, img.file)
+          }
         }
-        // empty towers: drop a placeholder so the folder survives in the zip
+        // if the tower itself has no images at all, add a root .keep too
         if (imagesByTower(t.id).length === 0) folder.file('.keep', '')
       }
       const blob = await zip.generateAsync({ type: 'blob' })
@@ -145,8 +148,9 @@ export default function App() {
       {/* ============ TOP BAR ============ */}
       <header className="topbar">
         <div className="brand">
-          <img src="/favicon.png" alt="AerioSort" className="brand-logo" />
-          <span className="brand-name">AerioSort</span>
+          <span className="brand-name">
+            <span className="brand-aero">Aerio</span><span className="brand-sort">Sort</span>
+          </span>
         </div>
         <div className="field">
           <label>Select Template</label>
@@ -256,11 +260,18 @@ export default function App() {
                     <input
                       type="checkbox"
                       checked={isSel}
-                      onChange={() => setSelectedTowerId(isSel ? null : t.id)}
+                      onChange={() => {
+                        const next = isSel ? null : t.id
+                        setSelectedTowerId(next)
+                        if (next) setExpandedTowerId(next)
+                      }}
                     />
                     <button
                       className="tower-name"
-                      onClick={() => setSelectedTowerId(t.id)}
+                      onClick={() => {
+                        setSelectedTowerId(t.id)
+                        setExpandedTowerId(isOpen ? null : t.id)
+                      }}
                     >
                       {t.label}
                     </button>
@@ -268,9 +279,11 @@ export default function App() {
                     {imgs.length > 0 && (
                       <button
                         className="chev"
-                        onClick={() =>
-                          setExpandedTowerId(isOpen ? null : t.id)
-                        }
+                        onClick={() => {
+                          const next = isOpen ? null : t.id
+                          setExpandedTowerId(next)
+                          if (next) setSelectedTowerId(next)
+                        }}
                       >
                         {isOpen ? '▾' : '▸'}
                       </button>
