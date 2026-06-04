@@ -1,5 +1,80 @@
 import { useEffect, useRef, useState } from 'react'
 import exifr from 'exifr'
+import L from 'leaflet'
+import 'leaflet/dist/leaflet.css'
+
+// Small Leaflet map shown bottom-left of the viewer
+function MiniMap({ lat, lon }) {
+  const elRef  = useRef(null)
+  const mapRef = useRef(null)
+  const mrkRef = useRef(null)
+
+  // init map once
+  useEffect(() => {
+    if (!elRef.current || mapRef.current) return
+    const map = L.map(elRef.current, {
+      zoomControl: false, attributionControl: false,
+      dragging: false, scrollWheelZoom: false,
+      doubleClickZoom: false, boxZoom: false, keyboard: false,
+    })
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map)
+    mapRef.current = map
+    return () => { map.remove(); mapRef.current = null }
+  }, [])
+
+  // update marker + view whenever coords change
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || lat == null || lon == null) return
+    if (mrkRef.current) mrkRef.current.remove()
+    const icon = L.divIcon({
+      className: '',
+      html: '<div class="minimap-dot"></div>',
+      iconSize: [14, 14], iconAnchor: [7, 7],
+    })
+    mrkRef.current = L.marker([lat, lon], { icon }).addTo(map)
+    map.setView([lat, lon], 16)
+  }, [lat, lon])
+
+  return (
+    <div className="minimap-wrap">
+      <div ref={elRef} className="minimap-el" />
+      {(lat == null) && <div className="minimap-nogps">No GPS</div>}
+    </div>
+  )
+}
+
+// Tower row with inline subfolder accordion + auto-scroll when opened
+function TowerAccordion({ tower, subfolders, isOpen, onToggle, onMove, onDrop }) {
+  const rowRef = useRef(null)
+  useEffect(() => {
+    if (isOpen && rowRef.current)
+      rowRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  }, [isOpen])
+  return (
+    <div className="lb-tower" ref={rowRef}>
+      <div className="lb-tower-row"
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => onDrop(e, null)}>
+        <span className="lb-tower-label">{tower.label}</span>
+        <button className="lb-move-btn" onClick={() => onMove(null)}>Move →</button>
+        {subfolders.length > 0 && (
+          <button className="lb-exp" onClick={onToggle}>
+            {isOpen ? '▾' : '▸'}
+          </button>
+        )}
+      </div>
+      {isOpen && subfolders.map((sf) => (
+        <button key={sf} className="lb-sf"
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => onDrop(e, sf)}
+          onClick={() => onMove(sf)}>
+          📂 {sf} →
+        </button>
+      ))}
+    </div>
+  )
+}
 
 // derive a Visual / Thermal / Wide / Zoom tag from the DJI filename suffix
 function classify(name = '') {
@@ -101,11 +176,16 @@ export default function Lightbox({
     return () => window.removeEventListener('keydown', onKey)
   }, [index, items.length])
 
-  // non-passive wheel so we stop browser zoom and zoom the image instead
+  // non-passive wheel so we stop browser zoom and zoom the image instead.
+  // Skip if the pointer is over the sort panel so it can scroll normally.
   useEffect(() => {
     const el = rootRef.current
     if (!el) return
-    const h = (e) => { e.preventDefault(); zoomBy(e.deltaY < 0 ? 1.15 : 1 / 1.15) }
+    const h = (e) => {
+      if (e.target.closest('.lb-sort')) return
+      e.preventDefault()
+      zoomBy(e.deltaY < 0 ? 1.15 : 1 / 1.15)
+    }
     el.addEventListener('wheel', h, { passive: false })
     return () => el.removeEventListener('wheel', h)
   }, [])
@@ -226,6 +306,9 @@ export default function Lightbox({
           <button onClick={() => setRot((r) => r + 90)} title="Rotate (R)">⟳</button>
         </div>
       </div>
+
+        {/* mini-map bottom-left */}
+        <MiniMap lat={meta?.lat} lon={meta?.lon} />
       </div>{/* end vw-main */}
 
       {/* ---------- NO TOWERS POPUP ---------- */}
@@ -242,73 +325,40 @@ export default function Lightbox({
         </div>
       )}
 
-      {/* ---------- CONTEXT-AWARE SORT PANEL (right column) ---------- */}
+      {/* ---------- CONTEXT-AWARE SORT PANEL (right column, fully scrollable) ---------- */}
       {towers.length > 0 && (
         <div className="lb-sort" onClick={stop}>
-          {/* POOL context: pick a tower to move this image into */}
+          {/* POOL: move to tower → expand inline to pick subfolder */}
           {context === 'pool' && (
             <>
               <div className="lb-sort-head">Move to Tower</div>
               <div className="lb-sort-list">
                 {towers.map((t) => (
-                  <div key={t.id} className="lb-tower">
-                    <div className="lb-tower-row"
-                      onDragOver={(e) => e.preventDefault()}
-                      onDrop={(e) => dropAssign(e, t.id, null)}>
-                      <span className="lb-tower-label">{t.label}</span>
-                      <button className="lb-move-btn" onClick={() => assign(t.id, null)}>
-                        Move →
-                      </button>
-                      {subfolders.length > 0 && (
-                        <button className="lb-exp"
-                          onClick={() => setOpenTower(openTower === t.id ? null : t.id)}>
-                          {openTower === t.id ? '▾' : '▸'}
-                        </button>
-                      )}
-                    </div>
-                    {openTower === t.id && subfolders.map((sf) => (
-                      <button key={sf} className="lb-sf"
-                        onDragOver={(e) => e.preventDefault()}
-                        onDrop={(e) => dropAssign(e, t.id, sf)}
-                        onClick={() => assign(t.id, sf)}>
-                        📂 {sf} →
-                      </button>
-                    ))}
-                  </div>
+                  <TowerAccordion
+                    key={t.id}
+                    tower={t}
+                    subfolders={subfolders}
+                    isOpen={openTower === t.id}
+                    onToggle={() => setOpenTower(openTower === t.id ? null : t.id)}
+                    onMove={(sf) => assign(t.id, sf)}
+                    onDrop={(e, sf) => dropAssign(e, t.id, sf)}
+                  />
                 ))}
               </div>
             </>
           )}
 
-          {/* TOWER context: pick a subfolder within the current tower */}
+          {/* TOWER/SUBFOLDER: show current tower's subfolders first, then switch tower */}
           {(context === 'tower' || context === 'subfolder') && ctxTower && (
             <>
-              <div className="lb-sort-head">
-                <span>📁 {ctxTower.label}</span>
-              </div>
+              <div className="lb-sort-head">📁 {ctxTower.label}</div>
               <div className="lb-sort-list">
-                {/* move back to pool */}
-                <button className="lb-back" onClick={assignPool}>
-                  ← Back to Folder 1
-                </button>
-                {/* move to a different tower */}
-                <div className="lb-section-label">Move to tower</div>
-                {towers.filter(t => t.id !== ctxTower.id).map((t) => (
-                  <div key={t.id} className="lb-tower">
-                    <div className="lb-tower-row"
-                      onDragOver={(e) => e.preventDefault()}
-                      onDrop={(e) => dropAssign(e, t.id, null)}>
-                      <span className="lb-tower-label">{t.label}</span>
-                      <button className="lb-move-btn" onClick={() => assign(t.id, null)}>
-                        Move →
-                      </button>
-                    </div>
-                  </div>
-                ))}
-                {/* subfolders of the current tower */}
+                <button className="lb-back" onClick={assignPool}>← Back to Folder 1</button>
+
+                {/* subfolders of the current tower — prominent at the top */}
                 {subfolders.length > 0 && (
                   <>
-                    <div className="lb-section-label">Move to subfolder</div>
+                    <div className="lb-section-label">Subfolders of {ctxTower.id}</div>
                     {subfolders.map((sf) => (
                       <button key={sf} className="lb-sf-big"
                         onDragOver={(e) => e.preventDefault()}
@@ -321,10 +371,24 @@ export default function Lightbox({
                       onDragOver={(e) => e.preventDefault()}
                       onDrop={(e) => dropAssign(e, ctxTower.id, null)}
                       onClick={() => assign(ctxTower.id, null)}>
-                      📄 Keep in {ctxTower.id} (unsorted)
+                      📄 Keep unsorted in {ctxTower.id}
                     </button>
                   </>
                 )}
+
+                {/* other towers as accordion */}
+                <div className="lb-section-label">Switch to another tower</div>
+                {towers.filter(t => t.id !== ctxTower.id).map((t) => (
+                  <TowerAccordion
+                    key={t.id}
+                    tower={t}
+                    subfolders={subfolders}
+                    isOpen={openTower === t.id}
+                    onToggle={() => setOpenTower(openTower === t.id ? null : t.id)}
+                    onMove={(sf) => assign(t.id, sf)}
+                    onDrop={(e, sf) => dropAssign(e, t.id, sf)}
+                  />
+                ))}
               </div>
             </>
           )}
