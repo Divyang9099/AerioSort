@@ -154,9 +154,6 @@ button { cursor: pointer; font-size: 14px; }
   overflow: hidden;
   cursor: grab;
   aspect-ratio: 1;
-  /* skip rendering/decoding tiles that are scrolled off-screen */
-  content-visibility: auto;
-  contain-intrinsic-size: 92px 92px;
 }
 .tile:active { cursor: grabbing; }
 .tile img {
@@ -211,8 +208,9 @@ button { cursor: pointer; font-size: 14px; }
 .tower.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .tower-row { display: flex; align-items: center; gap: 8px; }
 /* cap expanded image list so it doesn't push everything off screen */
-.tower .tiles.small {
-  max-height: 200px;
+.tower .tiles.small,
+.tower .key-grid {
+  max-height: 280px;
   overflow-y: auto;
 }
 .tower-name {
@@ -259,6 +257,32 @@ button { cursor: pointer; font-size: 14px; }
   text-align: center;
 }
 .empty.tiny { padding: 8px; font-size: 12px; }
+
+/* ---------- UPLOAD PROGRESS ---------- */
+.upload-progress {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 8px;
+}
+.upload-progress-text {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 7px;
+}
+.upload-progress-track {
+  background: var(--line);
+  border-radius: 999px;
+  height: 5px;
+  overflow: hidden;
+}
+.upload-progress-fill {
+  background: var(--accent);
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.15s ease;
+}
 
 /* ---------- FOLDER 1 SELECTION ---------- */
 .sel-toolbar {

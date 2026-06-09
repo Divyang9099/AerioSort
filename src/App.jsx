@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import JSZip from 'jszip'
 import { saveAs } from 'file-saver'
 import { TEMPLATES, TEMPLATE_NAMES } from './templates.js'
@@ -8,6 +8,29 @@ import AdminPanel, { loadCustomTemplates } from './AdminPanel.jsx'
 
 let uid = 0
 const nextId = () => `img_${uid++}`
+
+// Scroll container context — lets ImageTile use the column as IntersectionObserver root
+const ScrollRootCtx = createContext(null)
+
+// Global decode queue — limits concurrent image loads to avoid decode burst
+const MAX_CONCURRENT = 6
+const loadQueue = []
+let activeCount = 0
+function queueLoad(setSrc, url) {
+  loadQueue.push({ setSrc, url })
+  drainQueue()
+}
+function drainQueue() {
+  while (activeCount < MAX_CONCURRENT && loadQueue.length > 0) {
+    const { setSrc, url } = loadQueue.shift()
+    activeCount++
+    setSrc(url)
+  }
+}
+function loadDone() {
+  activeCount = Math.max(0, activeCount - 1)
+  drainQueue()
+}
 
 export default function App() {
   const [rangeFrom, setRangeFrom] = useState(1)
@@ -19,6 +42,8 @@ export default function App() {
   const [expandedTowerId, setExpandedTowerId] = useState(null)
   const [busy, setBusy] = useState(false)
   const [preview, setPreview] = useState(null)
+  const [uploadProgress, setUploadProgress] = useState(null)
+  const poolColRef = useRef(null)
   const [showMap,    setShowMap]    = useState(false)
   const [showAdmin,  setShowAdmin]  = useState(false)
   const [customTpls, setCustomTpls] = useState(() => loadCustomTemplates())
@@ -70,26 +95,41 @@ export default function App() {
 
   // --- Folder 1 multi-selection ---
   const [selectedImgIds, setSelectedImgIds] = useState(new Set())
-  const lastClickedId = useRef(null)   // store ID (stable), not index
-  const gridRef       = useRef(null)   // ref to the tiles grid div
-  const rbStart       = useRef(null)   // rubber-band start { x, y } in page coords
-  const [rbRect, setRbRect] = useState(null) // visual rect { left,top,width,height }
+  const lastClickedId   = useRef(null)
+  const gridRef         = useRef(null)
+  const rbStart         = useRef(null)
+  const [rbRect, setRbRect] = useState(null)
+  // Ref so toggleImgSelect useCallback needs no deps on poolImages
+  const poolImagesRef = useRef([])
 
-  // ---------- tile click selection ----------
-  const toggleImgSelect = (img, e) => {
+  // --- Key folder (tower expanded, col 2) multi-selection ---
+  const [keySelIds, setKeySelIds] = useState(new Set())
+  const keyLastClickedId = useRef(null)
+  // Ref updated each render with the currently-expanded tower's image list
+  const keyImgListRef = useRef([])
+
+  // --- Subfolder column (col 3) multi-selection ---
+  const [sfSelIds, setSfSelIds] = useState(new Set())
+  const sfLastClickedId = useRef(null)
+  // Ref updated each render with the last-clicked sf section's list
+  const sfImgListRef = useRef([])
+
+  // ── stable selection handlers (useCallback + refs → no re-creates on each render) ──
+
+  const toggleImgSelect = useCallback((img, e) => {
     e.preventDefault()
     e.stopPropagation()
     setSelectedImgIds(prev => {
       const next = new Set(prev)
       if (e.shiftKey && lastClickedId.current !== null) {
-        // range: find both indices at call time so they're always fresh
-        const ids    = poolImages.map(i => i.id)
-        const lastI  = ids.indexOf(lastClickedId.current)
-        const currI  = ids.indexOf(img.id)
+        const list  = poolImagesRef.current
+        const ids   = list.map(i => i.id)
+        const lastI = ids.indexOf(lastClickedId.current)
+        const currI = ids.indexOf(img.id)
         if (lastI !== -1 && currI !== -1) {
           const from = Math.min(lastI, currI)
           const to   = Math.max(lastI, currI)
-          for (let i = from; i <= to; i++) next.add(poolImages[i].id)
+          for (let k = from; k <= to; k++) next.add(list[k].id)
           return next
         }
       }
@@ -102,9 +142,85 @@ export default function App() {
       return next
     })
     lastClickedId.current = img.id
+  }, [])
+
+  const toggleKeyImgSelect = useCallback((img, e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setKeySelIds(prev => {
+      const next = new Set(prev)
+      if (e.shiftKey && keyLastClickedId.current !== null) {
+        const list  = keyImgListRef.current
+        const ids   = list.map(i => i.id)
+        const lastI = ids.indexOf(keyLastClickedId.current)
+        const currI = ids.indexOf(img.id)
+        if (lastI !== -1 && currI !== -1) {
+          const from = Math.min(lastI, currI)
+          const to   = Math.max(lastI, currI)
+          for (let k = from; k <= to; k++) next.add(list[k].id)
+          return next
+        }
+      }
+      if (e.ctrlKey || e.metaKey) {
+        next.has(img.id) ? next.delete(img.id) : next.add(img.id)
+      } else {
+        if (next.size === 1 && next.has(img.id)) next.clear()
+        else { next.clear(); next.add(img.id) }
+      }
+      return next
+    })
+    keyLastClickedId.current = img.id
+  }, [])
+
+  const toggleSfImgSelect = useCallback((img, e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setSfSelIds(prev => {
+      const next = new Set(prev)
+      if (e.shiftKey && sfLastClickedId.current !== null) {
+        const list  = sfImgListRef.current
+        const ids   = list.map(i => i.id)
+        const lastI = ids.indexOf(sfLastClickedId.current)
+        const currI = ids.indexOf(img.id)
+        if (lastI !== -1 && currI !== -1) {
+          const from = Math.min(lastI, currI)
+          const to   = Math.max(lastI, currI)
+          for (let k = from; k <= to; k++) next.add(list[k].id)
+          return next
+        }
+      }
+      if (e.ctrlKey || e.metaKey) {
+        next.has(img.id) ? next.delete(img.id) : next.add(img.id)
+      } else {
+        if (next.size === 1 && next.has(img.id)) next.clear()
+        else { next.clear(); next.add(img.id) }
+      }
+      return next
+    })
+    sfLastClickedId.current = img.id
+  }, [])
+
+  const clearKeySelection = useCallback(() => { setKeySelIds(new Set()); keyLastClickedId.current = null }, [])
+  const clearSfSelection  = useCallback(() => { setSfSelIds(new Set());  sfLastClickedId.current  = null }, [])
+
+  // Clear selections when context changes
+  useEffect(() => { clearKeySelection() }, [expandedTowerId, clearKeySelection])
+  useEffect(() => { clearSfSelection()  }, [selectedTowerId, clearSfSelection])
+
+  // Move sf-selected images to a subfolder (or tower root)
+  const moveSfSelectedToSubfolder = (sf) => {
+    setImages(prev => prev.map(img =>
+      sfSelIds.has(img.id)
+        ? { ...img, towerId: selectedTower.id, subfolder: sf }
+        : img
+    ))
+    clearSfSelection()
   }
 
-  const selectAll     = () => setSelectedImgIds(new Set(poolImages.map(i => i.id)))
+  // ---------- tile click selection ----------
+  // (toggleImgSelect is defined above as useCallback)
+
+  const selectAll     = () => setSelectedImgIds(new Set(poolImagesRef.current.map(i => i.id)))
   const clearSelection = () => { setSelectedImgIds(new Set()); lastClickedId.current = null }
 
   // ---------- rubber-band drag selection ----------
@@ -207,16 +323,34 @@ export default function App() {
     const files = Array.from(e.target.files || []).filter((f) =>
       f.type.startsWith('image/')
     )
-    const added = files.map((file) => ({
-      id: nextId(),
-      name: file.name,
-      url: URL.createObjectURL(file),
-      file,
-      towerId: null,
-      subfolder: null,
-    }))
-    setImages((prev) => [...prev, ...added])
-    e.target.value = '' // allow re-uploading same folder
+    if (files.length === 0) { e.target.value = ''; return }
+
+    setUploadProgress({ total: files.length, done: 0 })
+    const CHUNK = 30
+    let idx = 0
+
+    function step() {
+      const slice = files.slice(idx, idx + CHUNK)
+      const chunk = slice.map((file) => ({
+        id: nextId(),
+        name: file.name,
+        url: URL.createObjectURL(file),
+        file,
+        towerId: null,
+        subfolder: null,
+      }))
+      idx += slice.length
+      setImages((prev) => [...prev, ...chunk])
+      setUploadProgress({ total: files.length, done: idx })
+      if (idx < files.length) {
+        requestAnimationFrame(step)
+      } else {
+        setTimeout(() => setUploadProgress(null), 600)
+      }
+    }
+
+    requestAnimationFrame(step)
+    e.target.value = ''
   }
 
   const patch = (id, changes) =>
@@ -373,6 +507,7 @@ export default function App() {
       <main className="columns" onDragEnd={endDrag}>
         {/* ---------- COLUMN 1 : FOLDER 1 ---------- */}
         <section
+          ref={poolColRef}
           className={'col' + over('pool')}
           {...zone('pool')}
           onDrop={(e) => {
@@ -396,8 +531,23 @@ export default function App() {
             </div>
           </div>
 
+          {/* upload progress bar */}
+          {uploadProgress && (
+            <div className="upload-progress">
+              <div className="upload-progress-text">
+                Loading images… {uploadProgress.done} / {uploadProgress.total}
+              </div>
+              <div className="upload-progress-track">
+                <div
+                  className="upload-progress-fill"
+                  style={{ width: `${(uploadProgress.done / uploadProgress.total) * 100}%` }}
+                />
+              </div>
+            </div>
+          )}
+
           {/* selection toolbar */}
-          {poolImages.length > 0 && (
+          {poolImages.length > 0 && !uploadProgress && (
             <div className="sel-toolbar">
               <span className="sel-count">
                 {selectedImgIds.size > 0
@@ -416,17 +566,21 @@ export default function App() {
             ref={gridRef}
             onMouseDown={onGridMouseDown}
           >
-            {poolImages.map((img) => (
-              <ImageTile
-                key={img.id}
-                img={img}
-                selected={selectedImgIds.has(img.id)}
-                onSelect={(e) => toggleImgSelect(img, e)}
-                onDragStart={dragStart}
-                onOpen={(im) => openPreview(im, poolImages, 'pool')}
-              />
-            ))}
-            {poolImages.length === 0 && (
+            <ScrollRootCtx.Provider value={poolColRef}>
+              {/* update ref before rendering so shift-select always has fresh list */}
+              {(poolImagesRef.current = poolImages, null)}
+              {poolImages.map((img) => (
+                <ImageTile
+                  key={img.id}
+                  img={img}
+                  selected={selectedImgIds.has(img.id)}
+                  onSelect={toggleImgSelect}
+                  onDragStart={dragStart}
+                  onOpen={(im) => openPreview(im, poolImages, 'pool')}
+                />
+              ))}
+            </ScrollRootCtx.Provider>
+            {poolImages.length === 0 && !uploadProgress && (
               <div className="empty">Upload a folder of images to begin.</div>
             )}
           </div>
@@ -513,17 +667,70 @@ export default function App() {
                   </div>
                   {isOpen && (
                     <>
-                      <div className="tiles small">
+                      {/* key-folder selection toolbar */}
+                      {imgs.length > 0 && (
+                        <div className="sel-toolbar" style={{ marginTop: 6 }}>
+                          <span className="sel-count">
+                            {keySelIds.size > 0
+                              ? `${keySelIds.size} selected`
+                              : `${imgs.length} image(s) · Ctrl+click`}
+                          </span>
+                          <button className="sel-btn" onClick={() => setKeySelIds(new Set(imgs.map(i => i.id)))}>
+                            Select All
+                          </button>
+                          {keySelIds.size > 0 && (
+                            <button className="sel-btn danger" onClick={clearKeySelection}>Clear</button>
+                          )}
+                        </div>
+                      )}
+                      <div className="tiles small key-grid">
+                        {/* update ref before rendering for shift-select */}
+                        {(keyImgListRef.current = imgs, null)}
                         {imgs.map((img) => (
                           <ImageTile
                             key={img.id}
                             img={img}
+                            selected={keySelIds.has(img.id)}
+                            onSelect={toggleKeyImgSelect}
                             onDragStart={dragStart}
                             onOpen={(im) => openPreview(im, imgs, 'tower', t.id)}
                             tag={img.subfolder || 'unsorted'}
                           />
                         ))}
                       </div>
+                      {/* sticky move bar for key-folder selection */}
+                      {keySelIds.size > 0 && (
+                        <div className="move-bar" style={{ marginTop: 4 }}>
+                          <span className="move-bar-label">Move {keySelIds.size} image(s) to subfolder:</span>
+                          <div className="move-bar-towers">
+                            <button
+                              className="move-bar-btn"
+                              onClick={() => {
+                                setImages(prev => prev.map(img =>
+                                  keySelIds.has(img.id) ? { ...img, towerId: t.id, subfolder: null } : img
+                                ))
+                                clearKeySelection()
+                              }}
+                            >
+                              Unsorted
+                            </button>
+                            {subfolders.map(sf => (
+                              <button
+                                key={sf}
+                                className="move-bar-btn"
+                                onClick={() => {
+                                  setImages(prev => prev.map(img =>
+                                    keySelIds.has(img.id) ? { ...img, towerId: t.id, subfolder: sf } : img
+                                  ))
+                                  clearKeySelection()
+                                }}
+                              >
+                                {sf}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </>
                   )}
                 </div>
@@ -547,35 +754,59 @@ export default function App() {
           ) : (
             <>
               {/* remaining (unsorted) images of the selected tower */}
-              <div
-                className={'remaining' + over('remaining')}
-                {...zone('remaining')}
-                onDrop={(e) => {
-                  e.preventDefault()
-                  endDrag()
-                  moveToTowerRoot(getDragId(e), selectedTower.id)
-                }}
-              >
-                <div className="sub-title">
-                  Remaining in {selectedTower.label}
-                  <span className="badge">
-                    {unsortedOfTower(selectedTower.id).length}
-                  </span>
-                </div>
-                <div className="tiles small">
-                  {unsortedOfTower(selectedTower.id).map((img, _, arr) => (
-                    <ImageTile
-                      key={img.id}
-                      img={img}
-                      onDragStart={dragStart}
-                      onOpen={(im) => openPreview(im, arr, 'tower', selectedTower.id)}
-                    />
-                  ))}
-                  {unsortedOfTower(selectedTower.id).length === 0 && (
-                    <div className="empty tiny">All images sorted 🎉</div>
-                  )}
-                </div>
-              </div>
+              {(() => {
+                const unsorted = unsortedOfTower(selectedTower.id)
+                const allSfImgs = [...unsorted, ...subfolders.flatMap(sf => imagesInSubfolder(selectedTower.id, sf))]
+                return (
+                  <div
+                    className={'remaining' + over('remaining')}
+                    {...zone('remaining')}
+                    onDrop={(e) => {
+                      e.preventDefault()
+                      endDrag()
+                      moveToTowerRoot(getDragId(e), selectedTower.id)
+                    }}
+                  >
+                    <div className="sub-title">
+                      Remaining in {selectedTower.label}
+                      <span className="badge">{unsorted.length}</span>
+                      {unsorted.length > 0 && (
+                        <>
+                          <button className="sel-btn" style={{ marginLeft: 'auto', fontSize: 11 }}
+                            onClick={() => setSfSelIds(new Set(unsorted.map(i => i.id)))}>
+                            Select All
+                          </button>
+                        </>
+                      )}
+                    </div>
+                    {unsorted.length > 0 && sfSelIds.size > 0 && unsorted.some(i => sfSelIds.has(i.id)) && (
+                      <div className="sel-toolbar" style={{ marginBottom: 4 }}>
+                        <span className="sel-count">
+                          {unsorted.filter(i => sfSelIds.has(i.id)).length} selected
+                        </span>
+                        <button className="sel-btn danger" onClick={clearSfSelection}>Clear</button>
+                      </div>
+                    )}
+                    <div className="tiles small">
+                      {/* update ref so shift-select works within this section */}
+                      {(sfImgListRef.current = unsorted, null)}
+                      {unsorted.map((img) => (
+                        <ImageTile
+                          key={img.id}
+                          img={img}
+                          selected={sfSelIds.has(img.id)}
+                          onSelect={toggleSfImgSelect}
+                          onDragStart={dragStart}
+                          onOpen={(im) => openPreview(im, unsorted, 'tower', selectedTower.id)}
+                        />
+                      ))}
+                      {unsorted.length === 0 && (
+                        <div className="empty tiny">All images sorted 🎉</div>
+                      )}
+                    </div>
+                  </div>
+                )
+              })()}
 
               {/* the template's subfolders */}
               {subfolders.map((sf) => {
@@ -595,12 +826,30 @@ export default function App() {
                       <input type="checkbox" checked={inSf.length > 0} readOnly />
                       {sf}
                       <span className="badge">{inSf.length}</span>
+                      {inSf.length > 0 && (
+                        <button className="sel-btn" style={{ marginLeft: 'auto', fontSize: 11 }}
+                          onClick={() => setSfSelIds(new Set(inSf.map(i => i.id)))}>
+                          Select All
+                        </button>
+                      )}
                     </div>
+                    {inSf.length > 0 && sfSelIds.size > 0 && inSf.some(i => sfSelIds.has(i.id)) && (
+                      <div className="sel-toolbar" style={{ marginBottom: 4 }}>
+                        <span className="sel-count">
+                          {inSf.filter(i => sfSelIds.has(i.id)).length} selected
+                        </span>
+                        <button className="sel-btn danger" onClick={clearSfSelection}>Clear</button>
+                      </div>
+                    )}
                     <div className="tiles small">
+                      {/* update ref so shift-select works within this section */}
+                      {(sfImgListRef.current = inSf, null)}
                       {inSf.map((img) => (
                         <ImageTile
                           key={img.id}
                           img={img}
+                          selected={sfSelIds.has(img.id)}
+                          onSelect={toggleSfImgSelect}
                           onDragStart={dragStart}
                           onOpen={(im) => openPreview(im, inSf, 'subfolder', selectedTower.id)}
                         />
@@ -609,6 +858,23 @@ export default function App() {
                   </div>
                 )
               })}
+
+              {/* sticky move bar for subfolder-column selection */}
+              {sfSelIds.size > 0 && (
+                <div className="move-bar">
+                  <span className="move-bar-label">Move {sfSelIds.size} image(s) to:</span>
+                  <div className="move-bar-towers">
+                    <button className="move-bar-btn" onClick={() => moveSfSelectedToSubfolder(null)}>
+                      Unsorted
+                    </button>
+                    {subfolders.map(sf => (
+                      <button key={sf} className="move-bar-btn" onClick={() => moveSfSelectedToSubfolder(sf)}>
+                        {sf}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </>
           )}
         </section>
@@ -751,16 +1017,39 @@ function ProjectModal({ project, allTemplateNames, allTemplates, customTpls, onS
   )
 }
 
-function ImageTile({ img, onDragStart, onOpen, onSelect, selected, tag }) {
+// memo prevents re-render when sibling tiles are selected — only the changed tile re-renders
+const ImageTile = memo(function ImageTile({ img, onDragStart, onOpen, onSelect, selected, tag }) {
   const [loaded, setLoaded] = useState(false)
+  const [src, setSrc] = useState(null)
+  const tileRef = useRef(null)
+  const scrollRoot = useContext(ScrollRootCtx)
+
+  useEffect(() => {
+    const el = tileRef.current
+    if (!el) return
+    const obs = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          queueLoad(setSrc, img.url)
+          obs.disconnect()
+        }
+      },
+      { root: scrollRoot?.current ?? null, rootMargin: '300px' }
+    )
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [img.url, scrollRoot])
+
   return (
     <div
+      ref={tileRef}
       className={'tile' + (selected ? ' tile-selected' : '')}
       data-imgid={img.id}
       draggable
       onDragStart={(e) => onDragStart(e, img.id)}
       onClick={(e) => {
-        if (onSelect) onSelect(e)
+        // pass img back to the handler — handler signature: (img, e)
+        if (onSelect) onSelect(img, e)
         else if (onOpen) onOpen(img)
       }}
       onDoubleClick={() => onOpen && onOpen(img)}
@@ -768,16 +1057,18 @@ function ImageTile({ img, onDragStart, onOpen, onSelect, selected, tag }) {
     >
       {selected && <div className="tile-check">✓</div>}
       {!loaded && <div className="tile-skel" />}
-      <img
-        src={img.url}
-        alt={img.name}
-        loading="lazy"
-        decoding="async"
-        className={loaded ? 'in' : ''}
-        onLoad={() => setLoaded(true)}
-      />
+      {src && (
+        <img
+          src={src}
+          alt={img.name}
+          decoding="async"
+          className={loaded ? 'in' : ''}
+          onLoad={() => { setLoaded(true); loadDone() }}
+          onError={loadDone}
+        />
+      )}
       {tag && <span className="tile-tag">{tag}</span>}
       <span className="tile-name">{img.name}</span>
     </div>
   )
-}
+})
