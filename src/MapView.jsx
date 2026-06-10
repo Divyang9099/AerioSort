@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import exifr from 'exifr'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+import JSZip from 'jszip'
 import { parseKML } from './kmlParser.js'
 
 export default function MapView({ allImages, towers, onAssign, onClose }) {
@@ -46,10 +47,23 @@ export default function MapView({ allImages, towers, onAssign, onClose }) {
   // ── init Leaflet ───────────────────────────────────────────────────────────
   useEffect(() => {
     if (!mapElRef.current || mapRef.current) return
-    const map = L.map(mapElRef.current, { zoomControl: true })
+    const map = L.map(mapElRef.current, {
+      zoomControl:      true,
+      scrollWheelZoom:  true,   // mouse wheel zoom
+      doubleClickZoom:  true,   // double-click to zoom in
+      dragging:         true,   // pan by dragging
+      touchZoom:        true,   // pinch zoom on touch screens
+      keyboard:         true,   // arrow keys pan, +/- zoom
+      boxZoom:          true,   // shift+drag to zoom to a box
+      zoomSnap:         0.5,    // finer zoom steps
+      wheelPxPerZoomLevel: 80,  // smoother wheel zoom
+      worldCopyJump:    true,
+    })
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '© OpenStreetMap', maxZoom: 19,
     }).addTo(map)
+    L.control.scale({ imperial: false }).addTo(map)   // metric scale bar
+    map.setView([20.5937, 78.9629], 5)                // sensible default until data loads
     mapRef.current = map
     return () => { map.remove(); mapRef.current = null }
   }, [])
@@ -117,18 +131,31 @@ export default function MapView({ allImages, towers, onAssign, onClose }) {
     }
   }, [])
 
-  // ── KML upload ────────────────────────────────────────────────────────────
-  const onKmlUpload = (e) => {
+  // ── KML / KMZ upload (KMZ = zipped KML) ───────────────────────────────────
+  const onKmlUpload = async (e) => {
     const file = e.target.files?.[0]
     if (!file) return
     e.target.value = ''
-    const reader = new FileReader()
-    reader.onload = (ev) => {
-      const features = parseKML(ev.target.result)
+    try {
+      let kmlText
+      if (file.name.toLowerCase().endsWith('.kmz')) {
+        // KMZ is a ZIP archive — unzip and read the .kml entry inside
+        const zip = await JSZip.loadAsync(file)
+        const kmlEntry =
+          zip.file(/\.kml$/i)[0] ||        // any .kml (usually doc.kml)
+          zip.file('doc.kml')
+        if (!kmlEntry) { alert('No .kml found inside this KMZ file.'); return }
+        kmlText = await kmlEntry.async('string')
+      } else {
+        kmlText = await file.text()
+      }
+      const features = parseKML(kmlText)
       setKmlFeatures(features)
       setKmlName(file.name)
+    } catch (err) {
+      console.error(err)
+      alert('Could not read that file. Make sure it is a valid KML or KMZ.')
     }
-    reader.readAsText(file)
   }
 
   // ── render KML on map ─────────────────────────────────────────────────────
@@ -251,6 +278,19 @@ export default function MapView({ allImages, towers, onAssign, onClose }) {
     })
   }, [selectedIds])
 
+  // ── recenter map to fit everything (markers + KML) ────────────────────────
+  const fitAll = () => {
+    const map = mapRef.current
+    if (!map) return
+    const bounds = []
+    Object.values(coords).forEach(({ lat, lon }) => bounds.push([lat, lon]))
+    kmlLayerRef.current.forEach(l => {
+      if (l.getLatLng) bounds.push(l.getLatLng())
+      else if (l.getBounds) { const b = l.getBounds(); bounds.push(b.getNorthEast(), b.getSouthWest()) }
+    })
+    if (bounds.length) map.fitBounds(bounds, { padding: [40, 40] })
+  }
+
   const selArr = [...selectedIds]
   const noGps  = poolImages.filter(i => !coords[i.id])
 
@@ -264,9 +304,12 @@ export default function MapView({ allImages, towers, onAssign, onClose }) {
       {/* KML TOOLBAR */}
       <div className="kml-toolbar">
         <label className="kml-upload-btn">
-          📂 Upload KML
-          <input type="file" accept=".kml" hidden onChange={onKmlUpload} />
+          📂 Upload KML / KMZ
+          <input type="file" accept=".kml,.kmz,application/vnd.google-earth.kml+xml,application/vnd.google-earth.kmz" hidden onChange={onKmlUpload} />
         </label>
+        <button className="kml-fit-btn" onClick={fitAll} title="Recenter map to fit all markers and KML">
+          🎯 Fit all
+        </button>
         {kmlName && (
           <>
             <span className="kml-file-name">📄 {kmlName}</span>

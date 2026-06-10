@@ -163,6 +163,9 @@ button { cursor: pointer; font-size: 14px; }
   display: block;
   opacity: 0;
   transition: opacity 0.25s ease;
+  -webkit-user-drag: none; /* let the parent tile own the drag, not the image */
+  user-select: none;
+  pointer-events: none;    /* clicks/drags target the tile div, not the img */
 }
 .tile img.in { opacity: 1; }
 /* per-image shimmer placeholder until it finishes loading */
@@ -1002,6 +1005,17 @@ button { cursor: pointer; font-size: 14px; }
   cursor: pointer;
 }
 .kml-upload-btn:hover { background: #1f4a1f; border-color: #34c77b; }
+.kml-fit-btn {
+  background: #16243f;
+  color: #6fa3ff;
+  border: 1px solid #2a4a7a;
+  border-radius: 7px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.kml-fit-btn:hover { background: #1c2f54; border-color: #4f8cff; }
 .kml-file-name { color: var(--text); font-size: 13px; font-weight: 500; }
 .kml-stats { display: flex; gap: 10px; }
 .kml-stats span { color: var(--muted); font-size: 12px; }

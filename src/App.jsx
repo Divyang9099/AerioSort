@@ -12,26 +12,6 @@ const nextId = () => `img_${uid++}`
 // Scroll container context — lets ImageTile use the column as IntersectionObserver root
 const ScrollRootCtx = createContext(null)
 
-// Global decode queue — limits concurrent image loads to avoid decode burst
-const MAX_CONCURRENT = 6
-const loadQueue = []
-let activeCount = 0
-function queueLoad(setSrc, url) {
-  loadQueue.push({ setSrc, url })
-  drainQueue()
-}
-function drainQueue() {
-  while (activeCount < MAX_CONCURRENT && loadQueue.length > 0) {
-    const { setSrc, url } = loadQueue.shift()
-    activeCount++
-    setSrc(url)
-  }
-}
-function loadDone() {
-  activeCount = Math.max(0, activeCount - 1)
-  drainQueue()
-}
-
 export default function App() {
   const [rangeFrom, setRangeFrom] = useState(1)
   const [rangeTo, setRangeTo] = useState(20)
@@ -295,6 +275,14 @@ export default function App() {
     setPreview({ items: list, index: idx < 0 ? 0 : idx, context, contextTowerId })
   }
 
+  // Stable (no-dep) open handler for pool tiles — reads the live list from a ref
+  // so the reference never changes and ImageTile's memo holds across selection clicks.
+  const openPoolPreview = useCallback((im) => {
+    const list = poolImagesRef.current
+    const idx = list.findIndex((i) => i.id === im.id)
+    setPreview({ items: list, index: idx < 0 ? 0 : idx, context: 'pool', contextTowerId: null })
+  }, [])
+
   // ---------- actions ----------
   function createTowers() {
     const from = Math.max(1, Math.min(rangeFrom, rangeTo))
@@ -410,20 +398,21 @@ export default function App() {
       }
 
       for (const t of towers) {
+        // skip towers with no images at all — no empty folder in the zip
+        if (imagesByTower(t.id).length === 0) continue
         const towerName = towerFolderName(t)
         const folder = root.folder(towerName)
         // unsorted images directly in the tower folder
         const unsorted = imagesByTower(t.id).filter(i => !i.subfolder)
         unsorted.forEach((img, idx) => folder.file(imgName(img, towerName, null, idx), img.file))
-        // subfolders use the template's subfolder key names
+        // subfolders use the template's subfolder key names — only create non-empty ones
         for (const sf of subfolders) {
           const inSf = imagesInSubfolder(t.id, sf)
+          if (inSf.length === 0) continue
           const subName = `${towerName}_${slug(sf)}`
           const sub  = folder.folder(subName)
-          if (inSf.length === 0) sub.file('.keep', '')
-          else inSf.forEach((img, idx) => sub.file(imgName(img, towerName, sf, idx), img.file))
+          inSf.forEach((img, idx) => sub.file(imgName(img, towerName, sf, idx), img.file))
         }
-        if (imagesByTower(t.id).length === 0) folder.file('.keep', '')
       }
       const blob = await zip.generateAsync({ type: 'blob' })
       saveAs(blob, zipName)
@@ -433,7 +422,7 @@ export default function App() {
   }
 
   // ---------- drag & drop helpers ----------
-  const dragStart = (e, id) => e.dataTransfer.setData('text/plain', id)
+  const dragStart = useCallback((e, id) => e.dataTransfer.setData('text/plain', id), [])
   const getDragId = (e) => e.dataTransfer.getData('text/plain')
   // props that make an element a highlightable drop zone
   const zone = (key) => ({
@@ -576,7 +565,7 @@ export default function App() {
                   selected={selectedImgIds.has(img.id)}
                   onSelect={toggleImgSelect}
                   onDragStart={dragStart}
-                  onOpen={(im) => openPreview(im, poolImages, 'pool')}
+                  onOpen={openPoolPreview}
                 />
               ))}
             </ScrollRootCtx.Provider>
@@ -1030,11 +1019,11 @@ const ImageTile = memo(function ImageTile({ img, onDragStart, onOpen, onSelect, 
     const obs = new IntersectionObserver(
       ([entry]) => {
         if (entry.isIntersecting) {
-          queueLoad(setSrc, img.url)
+          setSrc(img.url)
           obs.disconnect()
         }
       },
-      { root: scrollRoot?.current ?? null, rootMargin: '300px' }
+      { root: scrollRoot?.current ?? null, rootMargin: '400px' }
     )
     obs.observe(el)
     return () => obs.disconnect()
@@ -1062,9 +1051,10 @@ const ImageTile = memo(function ImageTile({ img, onDragStart, onOpen, onSelect, 
           src={src}
           alt={img.name}
           decoding="async"
+          loading="lazy"
+          draggable={false}
           className={loaded ? 'in' : ''}
-          onLoad={() => { setLoaded(true); loadDone() }}
-          onError={loadDone}
+          onLoad={() => setLoaded(true)}
         />
       )}
       {tag && <span className="tile-tag">{tag}</span>}
