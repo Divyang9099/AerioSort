@@ -1,8 +1,9 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { TEMPLATES, TEMPLATE_NAMES, DEFAULT_CUSTOM_TEMPLATES } from './templates.js'
 
 const STORAGE_KEY = 'aeriosort_custom_templates'
 const SEED_KEY    = 'aeriosort_templates_seeded'
+const DRAFT_KEY   = 'aeriosort_template_draft'   // unsaved "New Template" form
 
 export function loadCustomTemplates() {
   try {
@@ -36,12 +37,46 @@ const EMPTY_FORM = {
   imagePattern: '{tower}_{subfolder}_{original}', // rename pattern
 }
 
+// ── unsaved draft persistence (so closing the modal never loses your work) ──
+function loadDraft() {
+  try {
+    const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null')
+    if (!d) return null
+    return {
+      ...EMPTY_FORM,
+      ...d,
+      subfolders: Array.isArray(d.subfolders) && d.subfolders.length ? d.subfolders : [''],
+    }
+  } catch { return null }
+}
+
+// has the user actually typed anything worth keeping?
+function draftHasContent(f) {
+  if (!f) return false
+  return !!(
+    f.name?.trim() ||
+    f.subfolders?.some(s => s.trim()) ||
+    f.renameImages ||
+    (f.towerPrefix && f.towerPrefix !== EMPTY_FORM.towerPrefix) ||
+    (f.imagePattern && f.imagePattern !== EMPTY_FORM.imagePattern)
+  )
+}
+
 export default function AdminPanel({ onClose, customTemplates, setCustomTemplates }) {
-  const [form,    setForm]    = useState(EMPTY_FORM)
+  const [form,    setForm]    = useState(() => loadDraft() || EMPTY_FORM)
   const [editIdx, setEditIdx] = useState(null)
-  const [tab,     setTab]     = useState('list')
+  // if there's an unsaved draft, reopen straight into the editor so it's visible
+  const [tab,     setTab]     = useState(() => draftHasContent(loadDraft()) ? 'edit' : 'list')
   const [error,   setError]   = useState('')
   const importRef = useRef(null)
+
+  // persist the new-template form as a draft on every change (not while editing
+  // an existing template — that has its own source of truth)
+  useEffect(() => {
+    if (tab !== 'edit' || editIdx !== null) return
+    if (draftHasContent(form)) localStorage.setItem(DRAFT_KEY, JSON.stringify(form))
+    else localStorage.removeItem(DRAFT_KEY)
+  }, [form, tab, editIdx])
 
   // ── export all custom templates as a JSON file ────────────────────────────
   const exportTemplates = () => {
@@ -86,7 +121,11 @@ export default function AdminPanel({ onClose, customTemplates, setCustomTemplate
   }))
 
   // ── open editor ───────────────────────────────────────────────────────────
-  const startNew = () => { setForm(EMPTY_FORM); setEditIdx(null); setError(''); setTab('edit') }
+  // open the new-template editor, restoring any unsaved draft
+  const startNew = () => { setForm(loadDraft() || EMPTY_FORM); setEditIdx(null); setError(''); setTab('edit') }
+
+  // discard the unsaved draft and start from a blank form
+  const discardDraft = () => { localStorage.removeItem(DRAFT_KEY); setForm(EMPTY_FORM); setError('') }
 
   const startEdit = (idx) => {
     const t = customTemplates[idx]
@@ -132,6 +171,9 @@ export default function AdminPanel({ onClose, customTemplates, setCustomTemplate
 
     saveAll(next)
     setCustomTemplates(next)
+    if (editIdx === null) localStorage.removeItem(DRAFT_KEY) // draft is now saved
+    setForm(EMPTY_FORM)
+    setEditIdx(null)
     setTab('list')
     setError('')
   }
@@ -324,9 +366,18 @@ export default function AdminPanel({ onClose, customTemplates, setCustomTemplate
               )}
             </div>
 
+            {editIdx === null && draftHasContent(form) && (
+              <div className="admin-draft-note">
+                ✓ Draft auto-saved — your details are kept even if you close this window.
+              </div>
+            )}
+
             {/* Actions */}
             <div className="admin-actions">
               <button className="admin-btn cancel" onClick={() => setTab('list')}>Cancel</button>
+              {editIdx === null && draftHasContent(form) && (
+                <button className="admin-btn del" onClick={discardDraft}>🗑 Start fresh</button>
+              )}
               <button className="admin-btn save" onClick={save}>
                 {editIdx !== null ? '💾 Update Template' : '💾 Save Template'}
               </button>
