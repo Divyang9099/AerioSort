@@ -5,6 +5,7 @@ import { TEMPLATES, TEMPLATE_NAMES } from './templates.js'
 import Lightbox from './Lightbox.jsx'
 import MapView from './MapView.jsx'
 import AdminPanel, { loadCustomTemplates } from './AdminPanel.jsx'
+import { saveFiles, loadAllFiles, clearFiles } from './db.js'
 
 let uid = 0
 const nextId = () => `img_${uid++}`
@@ -17,6 +18,9 @@ export default function App() {
   const [rangeTo, setRangeTo] = useState(20)
   const [towers, setTowers] = useState([])
 
+  const SESSION_KEY = 'vinyasah_session'
+  const [sessionLoaded, setSessionLoaded] = useState(false)
+
   const [images, setImages] = useState([])
   const [selectedTowerId, setSelectedTowerId] = useState(null)
   const [expandedTowerId, setExpandedTowerId] = useState(null)
@@ -24,6 +28,55 @@ export default function App() {
   const [preview, setPreview] = useState(null)
   const [uploadProgress, setUploadProgress] = useState(null)
   const poolColRef = useRef(null)
+
+  // --- resizable columns: fractions for [Folder1, Towers, Sub folders] ---
+  const COLS_KEY = 'vinyasah_col_widths'
+  const [colFr, setColFr] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(COLS_KEY) || 'null')
+      if (Array.isArray(saved) && saved.length === 3 && saved.every(n => n > 0)) return saved
+    } catch {}
+    return [1, 1, 1]
+  })
+  const columnsRef = useRef(null)
+  const resizeRef = useRef(null) // { handle, startX, startFr }
+
+  const startColResize = (handle) => (e) => {
+    e.preventDefault()
+    resizeRef.current = { handle, startX: e.clientX, startFr: [...colFr] }
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }
+
+  useEffect(() => {
+    const onMove = (e) => {
+      const r = resizeRef.current
+      if (!r || !columnsRef.current) return
+      const totalFr = r.startFr.reduce((a, b) => a + b, 0)
+      const contentW = columnsRef.current.clientWidth - 12 // minus the two 6px handles
+      const pxPerFr = contentW / totalFr
+      const dFr = (e.clientX - r.startX) / pxPerFr
+      const i = r.handle // 0 = between col1/col2, 1 = between col2/col3
+      const next = [...r.startFr]
+      const MIN = 0.25
+      next[i] = Math.max(MIN, r.startFr[i] + dFr)
+      next[i + 1] = Math.max(MIN, r.startFr[i + 1] - dFr)
+      setColFr(next)
+    }
+    const onUp = () => {
+      if (!resizeRef.current) return
+      resizeRef.current = null
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      setColFr(curr => { localStorage.setItem(COLS_KEY, JSON.stringify(curr)); return curr })
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+  }, [])
   const [showMap,    setShowMap]    = useState(false)
   const [showAdmin,  setShowAdmin]  = useState(false)
   const [customTpls, setCustomTpls] = useState(() => loadCustomTemplates())
@@ -53,6 +106,65 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('vinyasah_project', JSON.stringify(project))
   }, [project])
+
+  // ── restore session from IndexedDB + localStorage on first load ───────────
+  useEffect(() => {
+    async function restore() {
+      try {
+        const meta = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null')
+        if (!meta) { setSessionLoaded(true); return }
+
+        if (meta.rangeFrom != null) setRangeFrom(meta.rangeFrom)
+        if (meta.rangeTo   != null) setRangeTo(meta.rangeTo)
+        if (meta.towers?.length)    setTowers(meta.towers)
+
+        if (meta.imageMeta?.length) {
+          const fileEntries = await loadAllFiles()
+          const fileMap = Object.fromEntries(fileEntries.map(e => [e.id, e.file]))
+          const restored = meta.imageMeta
+            .filter(m => fileMap[m.id])
+            .map(m => ({
+              ...m,
+              file: fileMap[m.id],
+              url:  URL.createObjectURL(fileMap[m.id]),
+            }))
+          if (restored.length) setImages(restored)
+        }
+      } catch (err) {
+        console.error('Session restore failed:', err)
+      }
+      setSessionLoaded(true)
+    }
+    restore()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── auto-save session whenever anything meaningful changes ────────────────
+  useEffect(() => {
+    if (!sessionLoaded) return          // don't overwrite with empty state during restore
+    const meta = {
+      imageMeta: images.map(({ id, name, towerId, subfolder }) => ({ id, name, towerId, subfolder })),
+      towers,
+      rangeFrom,
+      rangeTo,
+    }
+    localStorage.setItem(SESSION_KEY, JSON.stringify(meta))
+  }, [images, towers, rangeFrom, rangeTo, sessionLoaded])
+
+  // ── clear entire session (files + metadata) ───────────────────────────────
+  const clearSession = async () => {
+    if (!window.confirm('Clear all images and tower assignments? This cannot be undone.')) return
+    try { await clearFiles() } catch {}
+    localStorage.removeItem(SESSION_KEY)
+    images.forEach(img => { try { URL.revokeObjectURL(img.url) } catch {} })
+    setImages([])
+    setTowers([])
+    setRangeFrom(1)
+    setRangeTo(20)
+    setSelectedTowerId(null)
+    setExpandedTowerId(null)
+    setSelectedImgIds(new Set())
+    lastClickedId.current = null
+  }
 
   // template is driven by the project — changing the project template updates everything
   const template = project.template || allTemplateNames[0]
@@ -316,6 +428,7 @@ export default function App() {
     setUploadProgress({ total: files.length, done: 0 })
     const CHUNK = 30
     let idx = 0
+    const allChunks = []
 
     function step() {
       const slice = files.slice(idx, idx + CHUNK)
@@ -327,6 +440,7 @@ export default function App() {
         towerId: null,
         subfolder: null,
       }))
+      allChunks.push(...chunk)
       idx += slice.length
       setImages((prev) => [...prev, ...chunk])
       setUploadProgress({ total: files.length, done: idx })
@@ -334,6 +448,8 @@ export default function App() {
         requestAnimationFrame(step)
       } else {
         setTimeout(() => setUploadProgress(null), 600)
+        // persist files to IndexedDB so session survives page reload
+        saveFiles(allChunks.map(({ id, file }) => ({ id, file }))).catch(console.error)
       }
     }
 
@@ -484,6 +600,11 @@ export default function App() {
 
         <div className="spacer" />
 
+        <button className="clear-session-btn" onClick={clearSession}
+          title="Delete all images and assignments from this session"
+          disabled={images.length === 0 && towers.length === 0}>
+          🗑 Clear
+        </button>
         <button className="admin-open-btn" onClick={() => setShowAdmin(true)} title="Template Manager">
           ⚙ Templates
         </button>
@@ -493,7 +614,12 @@ export default function App() {
       </header>
 
       {/* ============ THREE COLUMNS ============ */}
-      <main className="columns" onDragEnd={endDrag}>
+      <main
+        className="columns"
+        ref={columnsRef}
+        onDragEnd={endDrag}
+        style={{ gridTemplateColumns: `${colFr[0]}fr 6px ${colFr[1]}fr 6px ${colFr[2]}fr` }}
+      >
         {/* ---------- COLUMN 1 : FOLDER 1 ---------- */}
         <section
           ref={poolColRef}
@@ -597,6 +723,9 @@ export default function App() {
             </div>
           )}
         </section>
+
+        {/* resize handle between Folder 1 and Towers */}
+        <div className="col-resizer" onMouseDown={startColResize(0)} title="Drag to resize" />
 
         {/* ---------- COLUMN 2 : TOWERS ---------- */}
         <section className="col">
@@ -730,6 +859,9 @@ export default function App() {
             )}
           </div>
         </section>
+
+        {/* resize handle between Towers and Sub folders */}
+        <div className="col-resizer" onMouseDown={startColResize(1)} title="Drag to resize" />
 
         {/* ---------- COLUMN 3 : SUB FOLDERS ---------- */}
         <section className="col">

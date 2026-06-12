@@ -100,12 +100,25 @@ button { cursor: pointer; font-size: 14px; }
 /* ---------- COLUMNS ---------- */
 .columns {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 1px;
+  grid-template-columns: 1fr 6px 1fr 6px 1fr;
+  gap: 0;
   background: var(--line);
   flex: 1;
   min-height: 0;
 }
+.col-resizer {
+  background: var(--line);
+  cursor: col-resize;
+  position: relative;
+  transition: background 0.15s ease;
+}
+.col-resizer::after {
+  content: '';
+  position: absolute;
+  inset: 0 -3px;            /* widen the grab area beyond the visible 6px */
+}
+.col-resizer:hover,
+.col-resizer:active { background: var(--accent); }
 .col {
   background: var(--panel);
   padding: 14px;
@@ -810,6 +823,17 @@ button { cursor: pointer; font-size: 14px; }
   font-size: 13px;
 }
 .admin-open-btn:hover { border-color: var(--accent); color: #fff; }
+.clear-session-btn {
+  background: #2a1515;
+  color: #ff6b6b;
+  border: 1px solid #5a2020;
+  border-radius: 7px;
+  padding: 7px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.clear-session-btn:hover:not(:disabled) { background: #3a1a1a; border-color: #ff4444; }
+.clear-session-btn:disabled { opacity: 0.35; cursor: default; }
 
 /* ---------- ADMIN PANEL MODAL ---------- */
 .admin-overlay {
