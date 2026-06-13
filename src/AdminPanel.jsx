@@ -32,6 +32,7 @@ const EMPTY_FORM = {
   name: '',
   towerPrefix: 'T',           // tower folder prefix in ZIP → T1, T2
   zeroPad: false,              // T01, T02 padding
+  noSubfolders: false,         // when true, towers have no subfolders at all
   subfolders: [''],            // subfolder names
   renameImages: false,         // keep original filenames?
   imagePattern: '{tower}_{subfolder}_{original}', // rename pattern
@@ -56,6 +57,7 @@ function draftHasContent(f) {
   return !!(
     f.name?.trim() ||
     f.subfolders?.some(s => s.trim()) ||
+    f.noSubfolders ||
     f.renameImages ||
     (f.towerPrefix && f.towerPrefix !== EMPTY_FORM.towerPrefix) ||
     (f.imagePattern && f.imagePattern !== EMPTY_FORM.imagePattern)
@@ -129,11 +131,13 @@ export default function AdminPanel({ onClose, customTemplates, setCustomTemplate
 
   const startEdit = (idx) => {
     const t = customTemplates[idx]
+    const hasNoSf = !t.subfolders || t.subfolders.length === 0
     setForm({
       name:         t.name,
       towerPrefix:  t.towerPrefix  || 'T',
       zeroPad:      t.zeroPad      || false,
-      subfolders:   [...t.subfolders],
+      noSubfolders: hasNoSf,
+      subfolders:   hasNoSf ? [''] : [...t.subfolders],
       renameImages: t.renameImages || false,
       imagePattern: t.imagePattern || '{tower}_{subfolder}_{original}',
     })
@@ -153,8 +157,9 @@ export default function AdminPanel({ onClose, customTemplates, setCustomTemplate
     ]
     if (allNames.includes(name)) { setError('A template with this name already exists.'); return }
 
-    const sfs = form.subfolders.map(s => s.trim()).filter(Boolean)
-    if (!sfs.length) { setError('Add at least one subfolder.'); return }
+    // when "no subfolders" is checked, save an empty list and skip the check
+    const sfs = form.noSubfolders ? [] : form.subfolders.map(s => s.trim()).filter(Boolean)
+    if (!form.noSubfolders && !sfs.length) { setError('Add at least one subfolder, or tick “No subfolders”.'); return }
 
     const entry = {
       name,
@@ -314,20 +319,35 @@ export default function AdminPanel({ onClose, customTemplates, setCustomTemplate
             {/* Subfolders */}
             <div className="admin-group">
               <div className="admin-group-title">Subfolder Names</div>
-              {form.subfolders.map((sf, i) => (
-                <div key={i} className="admin-sf-row">
-                  <span className="admin-sf-num">{i + 1}</span>
-                  <input
-                    placeholder={`Subfolder ${i + 1}`}
-                    value={sf}
-                    onChange={e => setSF(i, e.target.value)}
-                  />
-                  <button className="admin-sf-del"
-                    onClick={() => removeSF(i)}
-                    disabled={form.subfolders.length === 1}>✕</button>
+
+              <label className="admin-toggle" style={{ marginBottom: 10 }}>
+                <input type="checkbox" checked={form.noSubfolders}
+                  onChange={e => setField('noSubfolders', e.target.checked)} />
+                <span>No subfolders — images go straight into each tower folder</span>
+              </label>
+
+              {form.noSubfolders ? (
+                <div className="admin-preview">
+                  Towers will have <b>no subfolders</b>. Images are sorted only into <b>{previewTower(1)}</b>, <b>{previewTower(2)}</b>…
                 </div>
-              ))}
-              <button className="admin-add-sf" onClick={addSF}>+ Add Subfolder</button>
+              ) : (
+                <>
+                  {form.subfolders.map((sf, i) => (
+                    <div key={i} className="admin-sf-row">
+                      <span className="admin-sf-num">{i + 1}</span>
+                      <input
+                        placeholder={`Subfolder ${i + 1}`}
+                        value={sf}
+                        onChange={e => setSF(i, e.target.value)}
+                      />
+                      <button className="admin-sf-del"
+                        onClick={() => removeSF(i)}
+                        disabled={form.subfolders.length === 1}>✕</button>
+                    </div>
+                  ))}
+                  <button className="admin-add-sf" onClick={addSF}>+ Add Subfolder</button>
+                </>
+              )}
             </div>
 
             {/* Export image naming */}
