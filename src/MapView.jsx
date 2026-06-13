@@ -221,30 +221,35 @@ export default function MapView({ allImages, towers, onAssign, onClose }) {
     markerMap.current = {}
 
     const bounds = []
-    Object.entries(coords).forEach(([id, { lat, lon }]) => {
-      const img = poolImages.find(i => i.id === id)
-      if (!img) return
+    // iterate in poolImages order so the number on each marker is stable
+    poolImages.forEach((img, i) => {
+      const c = coords[img.id]
+      if (!c) return
+      const { lat, lon } = c
+      const id  = img.id
+      const num = i + 1   // 1-based sequence number shown on the dot
 
       const isSel  = selectedIds.has(id)
-      const color  = isSel ? '#fff' : '#4f8cff'
-      const border = isSel ? '3px solid #4f8cff' : '2px solid rgba(255,255,255,0.5)'
+      const color  = isSel ? '#ffd24a' : '#4f8cff'
+      const border = isSel ? '3px solid #fff' : '2px solid rgba(255,255,255,0.6)'
 
       const icon = L.divIcon({
         className: '',
-        html: `<div class="map-marker" data-imgid="${id}" title="${img.name}"
-                    style="background:${color};border:${border}">
-                 <span class="map-marker-label" style="color:${isSel?'#111':'#fff'}">?</span>
+        html: `<div class="map-marker" data-imgid="${id}"
+                    style="background:${color};border:${border};z-index:${isSel ? 1000 : 1}">
+                 <span class="map-marker-label" style="color:${isSel?'#111':'#fff'}">${num}</span>
                </div>`,
         iconSize:    [28, 28],
         iconAnchor:  [14, 14],
-        popupAnchor: [0, -16],
       })
 
-      const marker = L.marker([lat, lon], { icon })
-      marker.bindPopup(`<b>${img.name}</b><br>${lat.toFixed(5)}, ${lon.toFixed(5)}`)
+      const marker = L.marker([lat, lon], { icon, riseOnHover: true })
+      // hover tooltip (does not block click) instead of a click-popup
+      marker.bindTooltip(`#${num} · ${img.name}`, { direction: 'top', offset: [0, -14] })
 
-      // click = select / ctrl+click = multi-select
+      // click = select / ctrl+click = multi-select (no popup → clean selection)
       marker.on('click', (e) => {
+        L.DomEvent.stopPropagation(e)
         const ctrl = e.originalEvent.ctrlKey || e.originalEvent.metaKey
         setSelectedIds(prev => {
           const next = new Set(prev)
@@ -271,9 +276,10 @@ export default function MapView({ allImages, towers, onAssign, onClose }) {
       const lbl = el.querySelector('.map-marker-label')
       if (!dot) return
       const isSel = selectedIds.has(id)
-      dot.style.background  = isSel ? '#fff' : '#4f8cff'
-      dot.style.border      = isSel ? '3px solid #4f8cff' : '2px solid rgba(255,255,255,0.5)'
-      dot.style.transform   = isSel ? 'scale(1.3)' : 'scale(1)'
+      dot.style.background  = isSel ? '#ffd24a' : '#4f8cff'
+      dot.style.border      = isSel ? '3px solid #fff' : '2px solid rgba(255,255,255,0.6)'
+      dot.style.transform   = isSel ? 'scale(1.35)' : 'scale(1)'
+      dot.style.zIndex      = isSel ? '1000' : '1'
       if (lbl) lbl.style.color = isSel ? '#111' : '#fff'
     })
   }, [selectedIds])
@@ -401,7 +407,7 @@ export default function MapView({ allImages, towers, onAssign, onClose }) {
             <span className="mapview-dot" style={{ background: '#4f8cff' }} /> Unsorted
           </div>
           <div className="mapview-legend-row">
-            <span className="mapview-dot" style={{ background: '#fff', border: '2px solid #4f8cff' }} /> Selected
+            <span className="mapview-dot" style={{ background: '#ffd24a', border: '2px solid #fff' }} /> Selected
           </div>
           {noGps.length > 0 && (
             <div className="mapview-no-gps">{noGps.length} image(s) have no GPS — not shown</div>
