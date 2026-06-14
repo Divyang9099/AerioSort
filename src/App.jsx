@@ -9,6 +9,11 @@ import { saveFiles, loadAllFiles, clearFiles } from './db.js'
 
 let uid = 0
 const nextId = () => `img_${uid++}`
+// keep the counter ahead of any restored ids so new uploads never collide
+const bumpUid = (id) => {
+  const n = Number(String(id).replace('img_', ''))
+  if (Number.isFinite(n) && n >= uid) uid = n + 1
+}
 
 // Scroll container context — lets ImageTile use the column as IntersectionObserver root
 const ScrollRootCtx = createContext(null)
@@ -123,11 +128,14 @@ export default function App() {
           const fileMap = Object.fromEntries(fileEntries.map(e => [e.id, e.file]))
           const restored = meta.imageMeta
             .filter(m => fileMap[m.id])
-            .map(m => ({
-              ...m,
-              file: fileMap[m.id],
-              url:  URL.createObjectURL(fileMap[m.id]),
-            }))
+            .map(m => {
+              bumpUid(m.id) // keep nextId() ahead of restored ids
+              return {
+                ...m,
+                file: fileMap[m.id],
+                url:  URL.createObjectURL(fileMap[m.id]),
+              }
+            })
           if (restored.length) setImages(restored)
         }
       } catch (err) {
@@ -513,6 +521,11 @@ export default function App() {
           + ext(img.name)
       }
 
+      // a File/Blob is required to add an image to the zip
+      const hasFile = (img) => img.file instanceof Blob && img.file.size > 0
+      let added = 0
+      let missing = 0
+
       for (const t of towers) {
         // skip towers with no images at all — no empty folder in the zip
         if (imagesByTower(t.id).length === 0) continue
@@ -520,18 +533,41 @@ export default function App() {
         const folder = root.folder(towerName)
         // unsorted images directly in the tower folder
         const unsorted = imagesByTower(t.id).filter(i => !i.subfolder)
-        unsorted.forEach((img, idx) => folder.file(imgName(img, towerName, null, idx), img.file))
+        unsorted.forEach((img, idx) => {
+          if (!hasFile(img)) { missing++; return }
+          folder.file(imgName(img, towerName, null, idx), img.file); added++
+        })
         // subfolders use the template's subfolder key names — only create non-empty ones
         for (const sf of subfolders) {
           const inSf = imagesInSubfolder(t.id, sf)
           if (inSf.length === 0) continue
           const subName = `${towerName}_${slug(sf)}`
           const sub  = folder.folder(subName)
-          inSf.forEach((img, idx) => sub.file(imgName(img, towerName, sf, idx), img.file))
+          inSf.forEach((img, idx) => {
+            if (!hasFile(img)) { missing++; return }
+            sub.file(imgName(img, towerName, sf, idx), img.file); added++
+          })
         }
       }
+
+      if (added === 0) {
+        alert(
+          missing > 0
+            ? `Export failed: none of the ${missing} assigned image(s) have a usable file.\n\nThis usually happens after reloading the page if the images were not re-saved. Re-upload the folder and try again.`
+            : 'Nothing to export. Assign some images to towers first.'
+        )
+        return
+      }
+
       const blob = await zip.generateAsync({ type: 'blob' })
       saveAs(blob, zipName)
+
+      if (missing > 0) {
+        alert(`Exported ${added} image(s). ${missing} image(s) were skipped because their file could not be read (try re-uploading those).`)
+      }
+    } catch (err) {
+      console.error('Export failed:', err)
+      alert('Export failed: ' + (err?.message || err))
     } finally {
       setBusy(false)
     }
