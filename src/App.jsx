@@ -575,9 +575,11 @@ export default function App() {
         return
       }
 
-      // STORE = no compression. Drone JPEGs are already compressed, so deflating
-      // them wastes CPU/memory and is what blows up the array-buffer allocation.
-      const genOpts = { compression: 'STORE', streamFiles: true }
+      // STORE = no compression (drone JPEGs don't shrink) → low memory + CPU.
+      // streamFiles:false writes a standard local header with CRC/size up front;
+      // streamFiles:true uses data descriptors which Windows Explorer's unzip
+      // rejects as "invalid". Per-file processing keeps memory low either way.
+      const genOpts = { compression: 'STORE', streamFiles: false }
 
       if (canStream) {
         // ── stream the zip straight to disk → constant memory, no size ceiling ──
@@ -601,8 +603,11 @@ export default function App() {
             let chain = Promise.resolve()
             const fail = (e) => { errored = e; reject(e) }
             stream.on('data', (chunk) => {
+              // snapshot the chunk NOW — JSZip reuses its internal buffer, so a
+              // deferred write would otherwise capture stale data → corrupt zip
+              const copy = chunk.slice()
               stream.pause() // ask JSZip to wait (best-effort backpressure)
-              chain = chain.then(() => writable.write(chunk))
+              chain = chain.then(() => writable.write(copy))
               chain.then(() => stream.resume(), fail)
             })
             stream.on('error', fail)
