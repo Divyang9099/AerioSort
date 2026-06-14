@@ -570,15 +570,55 @@ export default function App() {
         return
       }
 
-      const blob = await zip.generateAsync({ type: 'blob' })
-      saveAs(blob, zipName)
+      // STORE = no compression. Drone JPEGs are already compressed, so deflating
+      // them wastes CPU/memory and is what blows up the array-buffer allocation.
+      const genOpts = { compression: 'STORE', streamFiles: true }
+
+      if (typeof window.showSaveFilePicker === 'function') {
+        // ── stream the zip straight to disk → constant memory, no size ceiling ──
+        let handle
+        try {
+          handle = await window.showSaveFilePicker({
+            suggestedName: zipName,
+            types: [{ description: 'ZIP archive', accept: { 'application/zip': ['.zip'] } }],
+          })
+        } catch (e) {
+          if (e?.name === 'AbortError') return // user cancelled the save dialog
+          throw e
+        }
+        const writable = await handle.createWritable()
+        try {
+          await new Promise((resolve, reject) => {
+            const stream = zip.generateInternalStream({ type: 'uint8array', ...genOpts })
+            stream.on('data', (chunk) => {
+              // backpressure: pause JSZip while the disk write is in flight
+              stream.pause()
+              writable.write(chunk).then(() => stream.resume(), reject)
+            })
+            stream.on('error', reject)
+            stream.on('end', resolve)
+            stream.resume()
+          })
+        } finally {
+          await writable.close()
+        }
+      } else {
+        // ── fallback (Firefox/Safari): build one blob in memory ──
+        const blob = await zip.generateAsync({ type: 'blob', ...genOpts })
+        saveAs(blob, zipName)
+      }
 
       if (missing > 0) {
         alert(`Exported ${added} image(s). ${missing} image(s) were skipped because their file could not be read (try re-uploading those).`)
       }
     } catch (err) {
       console.error('Export failed:', err)
-      alert('Export failed: ' + (err?.message || err))
+      const msg = String(err?.message || err)
+      if (/allocation failed|out of memory|maximum call stack/i.test(msg)) {
+        alert('Export failed: ran out of memory building the ZIP.\n\nTry exporting fewer towers at a time, or use a Chromium browser (Chrome/Edge) which streams the ZIP to disk.')
+      } else {
+        alert('Export failed: ' + msg)
+      }
     } finally {
       setBusy(false)
     }
