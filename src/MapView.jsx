@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import exifr from 'exifr'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -313,6 +313,15 @@ export default function MapView({ allImages, towers, onAssign, onClose }) {
     })
   }, [selectedIds])
 
+  // stop the map from stealing wheel/click events over the move-to-tower bar,
+  // so scrolling the bar scrolls its list instead of zooming the map
+  const stopMapInteraction = useCallback((el) => {
+    if (el) {
+      L.DomEvent.disableScrollPropagation(el)
+      L.DomEvent.disableClickPropagation(el)
+    }
+  }, [])
+
   // ── recenter map to fit everything (markers + KML) ────────────────────────
   const fitAll = () => {
     const map = mapRef.current
@@ -381,7 +390,7 @@ export default function MapView({ allImages, towers, onAssign, onClose }) {
 
           {/* MOVE-TO-TOWER bar pinned to the bottom of the map */}
           {selArr.length > 0 && (
-            <div className="map-move-bar">
+            <div className="map-move-bar" ref={stopMapInteraction}>
               <div className="map-move-bar-head">
                 <span>Move <b>{selArr.length}</b> image(s) to tower</span>
                 <button className="map-move-bar-clear" onClick={() => setSelectedIds(new Set())}>
