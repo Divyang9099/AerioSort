@@ -9,6 +9,7 @@ export default function MapView({ allImages, towers, onAssign, onClose }) {
   const mapElRef  = useRef(null)
   const mapRef    = useRef(null)
   const markerMap = useRef({})   // imgId → L.Marker
+  const didFitRef = useRef(false) // auto-fit the view only once (initial load)
 
   const [coords,      setCoords]      = useState({})
   const [loading,     setLoading]     = useState(true)
@@ -264,7 +265,12 @@ export default function MapView({ allImages, towers, onAssign, onClose }) {
       bounds.push([lat, lon])
     })
 
-    if (bounds.length) map.fitBounds(bounds, { padding: [40, 40] })
+    // only auto-fit on the first render — afterwards keep the user's zoom/pan
+    // (re-fit on demand with the "Fit all" button)
+    if (bounds.length && !didFitRef.current) {
+      map.fitBounds(bounds, { padding: [40, 40] })
+      didFitRef.current = true
+    }
   }, [coords, loading])
 
   // ── update marker appearance when selection changes ───────────────────────

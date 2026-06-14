@@ -508,10 +508,8 @@ export default function App() {
       const base = (n) => { const i = n.lastIndexOf('.'); return i > 0 ? n.slice(0, i) : n }
 
       const imgName = (img, towerName, sf, idx) => {
-        if (!doRename) {
-          const part = sf ? slug(sf) : 'unsorted'
-          return `${towerName}_${part}_${String(idx + 1).padStart(3, '0')}${ext(img.name)}`
-        }
+        // "Keep original filenames" → use the real file name, unchanged
+        if (!doRename) return img.name
         return pattern
           .replaceAll('{project}',   pid)
           .replaceAll('{tower}',     towerName)
@@ -519,6 +517,17 @@ export default function App() {
           .replaceAll('{original}',  base(img.name))
           .replaceAll('{n}',         String(idx + 1).padStart(3, '0'))
           + ext(img.name)
+      }
+
+      // ensure no two files in the same folder collide (e.g. duplicate originals)
+      const uniqueName = (usedSet, name) => {
+        if (!usedSet.has(name)) { usedSet.add(name); return name }
+        const b = base(name), e = ext(name)
+        let n = 2
+        while (usedSet.has(`${b}_${n}${e}`)) n++
+        const finalName = `${b}_${n}${e}`
+        usedSet.add(finalName)
+        return finalName
       }
 
       // a File/Blob is required to add an image to the zip
@@ -533,9 +542,10 @@ export default function App() {
         const folder = root.folder(towerName)
         // unsorted images directly in the tower folder
         const unsorted = imagesByTower(t.id).filter(i => !i.subfolder)
+        const folderUsed = new Set()
         unsorted.forEach((img, idx) => {
           if (!hasFile(img)) { missing++; return }
-          folder.file(imgName(img, towerName, null, idx), img.file); added++
+          folder.file(uniqueName(folderUsed, imgName(img, towerName, null, idx)), img.file); added++
         })
         // subfolders use the template's subfolder key names — only create non-empty ones
         for (const sf of subfolders) {
@@ -543,9 +553,10 @@ export default function App() {
           if (inSf.length === 0) continue
           const subName = `${towerName}_${slug(sf)}`
           const sub  = folder.folder(subName)
+          const subUsed = new Set()
           inSf.forEach((img, idx) => {
             if (!hasFile(img)) { missing++; return }
-            sub.file(imgName(img, towerName, sf, idx), img.file); added++
+            sub.file(uniqueName(subUsed, imgName(img, towerName, sf, idx)), img.file); added++
           })
         }
       }
