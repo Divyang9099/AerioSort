@@ -1263,9 +1263,23 @@ button { cursor: pointer; font-size: 14px; }
   border-radius: 8px;
   margin: 4px 8px 8px;
   padding: 8px 10px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: 45%;            /* never let the move list eat the whole panel */
 }
-.mapview-bulk-label { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
-.mapview-bulk-row { display: flex; flex-wrap: wrap; gap: 5px; }
+.mapview-bulk-label { font-size: 11px; color: var(--muted); margin-bottom: 6px; flex-shrink: 0; }
+.mapview-bulk-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 5px;
+  flex: 1;
+  overflow-y: auto;          /* scroll when there are many towers */
+  min-height: 0;
+  padding-right: 4px;        /* room for the scrollbar */
+}
 .mapview-bulk-btn {
   background: var(--accent-2);
   color: #fff;
