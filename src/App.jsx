@@ -481,9 +481,14 @@ export default function App() {
     }
     // ── PROJECT ID is the root of everything (no project name) ──
     const pid = slug(project.id)
-    const name = window.prompt('Enter ZIP file name:', pid)
-    if (name === null) return // user cancelled
-    const zipName = (name.trim() || pid) + (name.endsWith('.zip') ? '' : '.zip')
+    const canStream = typeof window.showSaveFilePicker === 'function'
+    // On Chromium the native Save dialog asks for the name, so skip the prompt.
+    let zipName = pid + '.zip'
+    if (!canStream) {
+      const name = window.prompt('Enter ZIP file name:', pid)
+      if (name === null) return // user cancelled
+      zipName = (name.trim() || pid) + (name.endsWith('.zip') ? '' : '.zip')
+    }
     setBusy(true)
     try {
       const zip = new JSZip()
@@ -574,7 +579,7 @@ export default function App() {
       // them wastes CPU/memory and is what blows up the array-buffer allocation.
       const genOpts = { compression: 'STORE', streamFiles: true }
 
-      if (typeof window.showSaveFilePicker === 'function') {
+      if (canStream) {
         // ── stream the zip straight to disk → constant memory, no size ceiling ──
         let handle
         try {
