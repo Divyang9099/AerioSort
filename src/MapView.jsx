@@ -5,6 +5,11 @@ import 'leaflet/dist/leaflet.css'
 import JSZip from 'jszip'
 import { parseKML } from './kmlParser.js'
 
+// GPS cache keyed by file identity (name+size) so we never re-read EXIF for the
+// same image — survives map open/close and image-to-tower moves within a session.
+const gpsCache = new Map() // key → { lat, lon } | null
+const gpsKey = (img) => `${img.name}|${img.file?.size ?? 0}`
+
 export default function MapView({ allImages, towers, onAssign, onClose }) {
   const mapElRef  = useRef(null)
   const mapRef    = useRef(null)
@@ -12,7 +17,7 @@ export default function MapView({ allImages, towers, onAssign, onClose }) {
   const didFitRef = useRef(false) // auto-fit the view only once (initial load)
 
   const [coords,      setCoords]      = useState({})
-  const [loading,     setLoading]     = useState(true)
+  const [loading,     setLoading]     = useState(() => gpsCache.size === 0)
   const [selectedIds, setSelectedIds] = useState(new Set())
 
   // KML state
@@ -27,20 +32,34 @@ export default function MapView({ allImages, towers, onAssign, onClose }) {
   // only pool images have GPS dots (images still in Folder 1)
   const poolImages = allImages.filter(i => !i.towerId)
 
-  // ── load EXIF GPS ──────────────────────────────────────────────────────────
+  // ── load EXIF GPS (incremental + cached → never re-reads known images) ──────
   useEffect(() => {
     let alive = true
-    setLoading(true)
+    const buildCoords = () => {
+      const out = {}
+      poolImages.forEach(img => {
+        const v = gpsCache.get(gpsKey(img))
+        if (v) out[img.id] = v   // skip nulls (no-GPS images)
+      })
+      return out
+    }
+
+    const todo = poolImages.filter(img => !gpsCache.has(gpsKey(img)))
+    if (todo.length === 0) {
+      // everything already known — just refresh from cache, no spinner
+      setCoords(buildCoords())
+      setLoading(false)
+      return
+    }
+    if (gpsCache.size === 0) setLoading(true) // spinner only on the very first read
     ;(async () => {
-      const result = {}
-      await Promise.allSettled(poolImages.map(async img => {
+      await Promise.allSettled(todo.map(async img => {
         try {
           const gps = await exifr.gps(img.file)
-          if (gps?.latitude != null)
-            result[img.id] = { lat: gps.latitude, lon: gps.longitude }
-        } catch {}
+          gpsCache.set(gpsKey(img), gps?.latitude != null ? { lat: gps.latitude, lon: gps.longitude } : null)
+        } catch { gpsCache.set(gpsKey(img), null) }
       }))
-      if (alive) { setCoords(result); setLoading(false) }
+      if (alive) { setCoords(buildCoords()); setLoading(false) }
     })()
     return () => { alive = false }
   }, [allImages])
@@ -56,8 +75,11 @@ export default function MapView({ allImages, towers, onAssign, onClose }) {
       touchZoom:        true,   // pinch zoom on touch screens
       keyboard:         true,   // arrow keys pan, +/- zoom
       boxZoom:          true,   // shift+drag to zoom to a box
-      zoomSnap:         0.5,    // finer zoom steps
-      wheelPxPerZoomLevel: 80,  // smoother wheel zoom
+      zoomSnap:         1,      // standard 1-level zoom steps
+      zoomDelta:        1,
+      wheelDebounceTime: 20,    // snappier wheel response
+      wheelPxPerZoomLevel: 60,  // default — one notch ≈ one zoom level
+      maxZoom:          19,     // OSM's native max — stays crisp, no upscaling blur
       worldCopyJump:    true,
     })
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -65,6 +87,7 @@ export default function MapView({ allImages, towers, onAssign, onClose }) {
     }).addTo(map)
     L.control.scale({ imperial: false }).addTo(map)   // metric scale bar
     map.setView([20.5937, 78.9629], 5)                // sensible default until data loads
+    map.scrollWheelZoom.enable()                      // ensure wheel zoom is active
     mapRef.current = map
     return () => { map.remove(); mapRef.current = null }
   }, [])
