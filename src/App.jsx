@@ -592,20 +592,26 @@ export default function App() {
           throw e
         }
         const writable = await handle.createWritable()
+        let errored = null
         try {
+          // Serialize every write through one chain so writable.write() is NEVER
+          // called concurrently (the File System API errors on overlapping writes).
           await new Promise((resolve, reject) => {
             const stream = zip.generateInternalStream({ type: 'uint8array', ...genOpts })
+            let chain = Promise.resolve()
+            const fail = (e) => { errored = e; reject(e) }
             stream.on('data', (chunk) => {
-              // backpressure: pause JSZip while the disk write is in flight
-              stream.pause()
-              writable.write(chunk).then(() => stream.resume(), reject)
+              stream.pause() // ask JSZip to wait (best-effort backpressure)
+              chain = chain.then(() => writable.write(chunk))
+              chain.then(() => stream.resume(), fail)
             })
-            stream.on('error', reject)
-            stream.on('end', resolve)
+            stream.on('error', fail)
+            stream.on('end', () => { chain.then(resolve, fail) })
             stream.resume()
           })
         } finally {
-          await writable.close()
+          if (errored) { try { await writable.abort() } catch {} }
+          else         { await writable.close() }
         }
       } else {
         // ── fallback (Firefox/Safari): build one blob in memory ──
