@@ -1172,23 +1172,86 @@ button { cursor: pointer; font-size: 14px; }
   padding: 0 14px 6px;
   margin: 6px 0 0;
 }
-.mapview-towers {
+.mapview-panel-body {
   flex: 1;
-  overflow-y: auto;
-  padding: 6px 8px;
+  min-height: 0;
+  overflow-y: auto;       /* ONE scrollbar for the whole panel body */
   display: flex;
   flex-direction: column;
+}
+.mapview-towers {
+  padding: 6px 8px;
+  display: grid;                          /* 4-column grid for compact viewing */
+  grid-template-columns: repeat(4, 1fr);
   gap: 5px;
 }
-.mapview-tower {
+
+/* ── MOVE-TO-TOWER bar pinned to the bottom of the map ── */
+.map-move-bar {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  z-index: 600;
+  background: rgba(17, 20, 24, 0.95);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.5);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  max-height: 38%;
+}
+.map-move-bar-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  font-size: 13px;
+  color: var(--text);
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+.map-move-bar-clear {
+  background: transparent;
+  border: 1px solid #ff6b6b55;
+  color: #ff6b6b;
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.map-move-bar-clear:hover { background: #ff6b6b22; }
+.map-move-bar-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  gap: 6px;
+  overflow-y: auto;            /* scrollbar on the right when many towers */
+  padding-right: 4px;
+  min-height: 0;
+}
+.map-move-bar-btn {
+  background: var(--accent-2);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 4px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.map-move-bar-btn:hover { background: var(--accent); }
+.mapview-tower {
+  display: flex;
+  flex-direction: column;        /* compact: label on top, count below */
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
   background: var(--panel-2);
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 9px 12px;
-  font-size: 13px;
+  padding: 6px 4px;
+  font-size: 12px;
+  text-align: center;
   transition: border-color 0.1s, background 0.1s;
 }
 .mapview-tower.hover {
@@ -1196,13 +1259,20 @@ button { cursor: pointer; font-size: 14px; }
   background: rgba(79,140,255,0.2);
   box-shadow: 0 0 0 2px rgba(79,140,255,0.3);
 }
-.mapview-tower-label { color: var(--text); }
+.mapview-tower-label {
+  color: var(--text);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
 .mapview-tower-count {
   background: var(--panel);
   color: var(--muted);
   border-radius: 999px;
-  padding: 1px 8px;
-  font-size: 11px;
+  padding: 0 7px;
+  font-size: 10px;
 }
 .mapview-legend {
   padding: 10px 14px 14px;
@@ -1263,23 +1333,9 @@ button { cursor: pointer; font-size: 14px; }
   border-radius: 8px;
   margin: 4px 8px 8px;
   padding: 8px 10px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  max-height: 45%;            /* never let the move list eat the whole panel */
 }
-.mapview-bulk-label { font-size: 11px; color: var(--muted); margin-bottom: 6px; flex-shrink: 0; }
-.mapview-bulk-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-content: flex-start;
-  gap: 5px;
-  flex: 1;
-  overflow-y: auto;          /* scroll when there are many towers */
-  min-height: 0;
-  padding-right: 4px;        /* room for the scrollbar */
-}
+.mapview-bulk-label { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+.mapview-bulk-row { display: flex; flex-wrap: wrap; gap: 5px; }
 .mapview-bulk-btn {
   background: var(--accent-2);
   color: #fff;

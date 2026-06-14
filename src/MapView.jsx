@@ -378,6 +378,29 @@ export default function MapView({ allImages, towers, onAssign, onClose }) {
               width: rbRect.width, height: rbRect.height,
             }} />
           )}
+
+          {/* MOVE-TO-TOWER bar pinned to the bottom of the map */}
+          {selArr.length > 0 && (
+            <div className="map-move-bar">
+              <div className="map-move-bar-head">
+                <span>Move <b>{selArr.length}</b> image(s) to tower</span>
+                <button className="map-move-bar-clear" onClick={() => setSelectedIds(new Set())}>
+                  ✕ Clear
+                </button>
+              </div>
+              <div className="map-move-bar-grid">
+                {towers.map(t => (
+                  <button key={t.id} className="map-move-bar-btn"
+                    onClick={() => {
+                      selArr.forEach(id => onAssign(id, t.id))
+                      setSelectedIds(new Set())
+                    }}>
+                    {t.id}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* SIDE PANEL — inside the row so the map gets remaining height */}
@@ -387,49 +410,31 @@ export default function MapView({ allImages, towers, onAssign, onClose }) {
           <button className="mapview-close" onClick={onClose}>✕</button>
         </div>
 
-        <div className="mapview-sel-info">
-          {selArr.length > 0
-            ? <span className="mapview-sel-count">{selArr.length} selected</span>
-            : <span className="mapview-hint-text">
-                Click dot to select · Ctrl+click multi · <b>Ctrl+drag</b> to select area
-              </span>
-          }
-        </div>
-
-        {/* bulk move when something is selected */}
-        {selArr.length > 0 && (
-          <div className="mapview-bulk">
-            <div className="mapview-bulk-label">Move {selArr.length} image(s) to tower:</div>
-            <div className="mapview-bulk-row">
-              {towers.map(t => (
-                <button key={t.id} className="mapview-bulk-btn"
-                  onClick={() => {
-                    selArr.forEach(id => onAssign(id, t.id))
-                    setSelectedIds(new Set())
-                  }}>
-                  {t.id}
-                </button>
-              ))}
-            </div>
-            <button className="mapview-clear-btn" onClick={() => setSelectedIds(new Set())}>
-              Clear selection
-            </button>
+        {/* single scrolling body so nothing gets cut off / squished */}
+        <div className="mapview-panel-body">
+          <div className="mapview-sel-info">
+            {selArr.length > 0
+              ? <span className="mapview-sel-count">{selArr.length} selected</span>
+              : <span className="mapview-hint-text">
+                  Click dot to select · Ctrl+click multi · <b>Ctrl+drag</b> to select area
+                </span>
+            }
           </div>
-        )}
 
-        {/* tower list with live counts */}
-        <div className="mapview-tower-section-label">Towers</div>
-        <div className="mapview-towers">
-          {towers.map(t => (
-            <div key={t.id} className="mapview-tower">
-              <span className="mapview-tower-label">{t.label}</span>
-              <span className="mapview-tower-count">
-                {allImages.filter(i => i.towerId === t.id).length}
-              </span>
-            </div>
-          ))}
-          {towers.length === 0 && <p className="mapview-empty">Create towers first.</p>}
-        </div>
+          {/* tower list with live counts */}
+          <div className="mapview-tower-section-label">Towers</div>
+          <div className="mapview-towers">
+            {towers.map(t => (
+              <div key={t.id} className="mapview-tower">
+                <span className="mapview-tower-label">{t.label}</span>
+                <span className="mapview-tower-count">
+                  {allImages.filter(i => i.towerId === t.id).length}
+                </span>
+              </div>
+            ))}
+            {towers.length === 0 && <p className="mapview-empty">Create towers first.</p>}
+          </div>
+        </div>{/* end mapview-panel-body */}
 
         <div className="mapview-legend">
           <div className="mapview-legend-row">
