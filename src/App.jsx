@@ -48,7 +48,7 @@ export default function App() {
     try {
       const saved = JSON.parse(localStorage.getItem(COLS_KEY) || 'null')
       if (Array.isArray(saved) && saved.length === 3 && saved.every(n => n > 0)) return saved
-    } catch {}
+    } catch { }
     return [1, 1, 1]
   })
   const columnsRef = useRef(null)
@@ -90,8 +90,8 @@ export default function App() {
       window.removeEventListener('mouseup', onUp)
     }
   }, [])
-  const [showMap,    setShowMap]    = useState(false)
-  const [showAdmin,  setShowAdmin]  = useState(false)
+  const [showMap, setShowMap] = useState(false)
+  const [showAdmin, setShowAdmin] = useState(false)
   const [customTpls, setCustomTpls] = useState(() => loadCustomTemplates())
 
   // merge built-in + custom templates (must come before Project which references allTemplateNames)
@@ -109,7 +109,7 @@ export default function App() {
     try {
       const saved = JSON.parse(localStorage.getItem('vinyasah_project') || 'null')
       if (saved?.name) return saved
-    } catch {}
+    } catch { }
     return {
       name: 'Untitled Project',
       id: 'PRJ-' + String(Date.now()).slice(-6),
@@ -128,8 +128,8 @@ export default function App() {
         if (!meta) { setSessionLoaded(true); return }
 
         if (meta.rangeFrom != null) setRangeFrom(meta.rangeFrom)
-        if (meta.rangeTo   != null) setRangeTo(meta.rangeTo)
-        if (meta.towers?.length)    setTowers(meta.towers)
+        if (meta.rangeTo != null) setRangeTo(meta.rangeTo)
+        if (meta.towers?.length) setTowers(meta.towers)
 
         if (meta.imageMeta?.length) {
           const fileEntries = await loadAllFiles()
@@ -141,7 +141,7 @@ export default function App() {
               return {
                 ...m,
                 file: fileMap[m.id],
-                url:  URL.createObjectURL(fileMap[m.id]),
+                url: URL.createObjectURL(fileMap[m.id]),
               }
             })
           if (restored.length) setImages(restored)
@@ -169,9 +169,9 @@ export default function App() {
   // ── clear entire session (files + metadata) ───────────────────────────────
   const clearSession = async () => {
     if (!window.confirm('Clear all images and tower assignments? This cannot be undone.')) return
-    try { await clearFiles() } catch {}
+    try { await clearFiles() } catch { }
     localStorage.removeItem(SESSION_KEY)
-    images.forEach(img => { try { URL.revokeObjectURL(img.url) } catch {} })
+    images.forEach(img => { try { URL.revokeObjectURL(img.url) } catch { } })
     setImages([])
     setTowers([])
     setRangeFrom(1)
@@ -203,9 +203,9 @@ export default function App() {
 
   // --- Folder 1 multi-selection ---
   const [selectedImgIds, setSelectedImgIds] = useState(new Set())
-  const lastClickedId   = useRef(null)
-  const gridRef         = useRef(null)
-  const rbStart         = useRef(null)
+  const lastClickedId = useRef(null)
+  const gridRef = useRef(null)
+  const rbStart = useRef(null)
   const [rbRect, setRbRect] = useState(null)
   // Ref so toggleImgSelect useCallback needs no deps on poolImages
   const poolImagesRef = useRef([])
@@ -230,13 +230,13 @@ export default function App() {
     setSelectedImgIds(prev => {
       const next = new Set(prev)
       if (e.shiftKey && lastClickedId.current !== null) {
-        const list  = poolImagesRef.current
-        const ids   = list.map(i => i.id)
+        const list = poolImagesRef.current
+        const ids = list.map(i => i.id)
         const lastI = ids.indexOf(lastClickedId.current)
         const currI = ids.indexOf(img.id)
         if (lastI !== -1 && currI !== -1) {
           const from = Math.min(lastI, currI)
-          const to   = Math.max(lastI, currI)
+          const to = Math.max(lastI, currI)
           for (let k = from; k <= to; k++) next.add(list[k].id)
           return next
         }
@@ -258,13 +258,13 @@ export default function App() {
     setKeySelIds(prev => {
       const next = new Set(prev)
       if (e.shiftKey && keyLastClickedId.current !== null) {
-        const list  = keyImgListRef.current
-        const ids   = list.map(i => i.id)
+        const list = keyImgListRef.current
+        const ids = list.map(i => i.id)
         const lastI = ids.indexOf(keyLastClickedId.current)
         const currI = ids.indexOf(img.id)
         if (lastI !== -1 && currI !== -1) {
           const from = Math.min(lastI, currI)
-          const to   = Math.max(lastI, currI)
+          const to = Math.max(lastI, currI)
           for (let k = from; k <= to; k++) next.add(list[k].id)
           return next
         }
@@ -286,13 +286,13 @@ export default function App() {
     setSfSelIds(prev => {
       const next = new Set(prev)
       if (e.shiftKey && sfLastClickedId.current !== null) {
-        const list  = sfImgListRef.current
-        const ids   = list.map(i => i.id)
+        const list = sfImgListRef.current
+        const ids = list.map(i => i.id)
         const lastI = ids.indexOf(sfLastClickedId.current)
         const currI = ids.indexOf(img.id)
         if (lastI !== -1 && currI !== -1) {
           const from = Math.min(lastI, currI)
-          const to   = Math.max(lastI, currI)
+          const to = Math.max(lastI, currI)
           for (let k = from; k <= to; k++) next.add(list[k].id)
           return next
         }
@@ -309,11 +309,11 @@ export default function App() {
   }, [])
 
   const clearKeySelection = useCallback(() => { setKeySelIds(new Set()); keyLastClickedId.current = null }, [])
-  const clearSfSelection  = useCallback(() => { setSfSelIds(new Set());  sfLastClickedId.current  = null }, [])
+  const clearSfSelection = useCallback(() => { setSfSelIds(new Set()); sfLastClickedId.current = null }, [])
 
   // Clear selections when context changes
   useEffect(() => { clearKeySelection() }, [expandedTowerId, clearKeySelection])
-  useEffect(() => { clearSfSelection()  }, [selectedTowerId, clearSfSelection])
+  useEffect(() => { clearSfSelection() }, [selectedTowerId, clearSfSelection])
 
   // Move sf-selected images to a subfolder (or tower root)
   const moveSfSelectedToSubfolder = (sf) => {
@@ -328,7 +328,7 @@ export default function App() {
   // ---------- tile click selection ----------
   // (toggleImgSelect is defined above as useCallback)
 
-  const selectAll     = () => setSelectedImgIds(new Set(poolImagesRef.current.map(i => i.id)))
+  const selectAll = () => setSelectedImgIds(new Set(poolImagesRef.current.map(i => i.id)))
   const clearSelection = () => { setSelectedImgIds(new Set()); lastClickedId.current = null }
 
   // ---------- rubber-band drag selection ----------
@@ -353,9 +353,9 @@ export default function App() {
       if (!rbStart.current) return
       const { x, y } = rbStart.current
       const rect = {
-        left:   Math.min(x, e.clientX),
-        top:    Math.min(y, e.clientY),
-        width:  Math.abs(e.clientX - x),
+        left: Math.min(x, e.clientX),
+        top: Math.min(y, e.clientY),
+        width: Math.abs(e.clientX - x),
         height: Math.abs(e.clientY - y),
       }
       if (rect.width < 4 && rect.height < 4) return   // ignore micro drags
@@ -364,8 +364,8 @@ export default function App() {
       const newSel = new Set()
       gridRef.current.querySelectorAll('[data-imgid]').forEach(tile => {
         const tr = tile.getBoundingClientRect()
-        if (rect.left < tr.right && rect.left + rect.width  > tr.left &&
-            rect.top  < tr.bottom && rect.top  + rect.height > tr.top) {
+        if (rect.left < tr.right && rect.left + rect.width > tr.left &&
+          rect.top < tr.bottom && rect.top + rect.height > tr.top) {
           newSel.add(tile.dataset.imgid)
         }
       })
@@ -373,10 +373,10 @@ export default function App() {
     }
     const onUp = () => { rbStart.current = null; setRbRect(null) }
     window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup',   onUp)
+    window.addEventListener('mouseup', onUp)
     return () => {
       window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup',   onUp)
+      window.removeEventListener('mouseup', onUp)
     }
   }, [poolImages])
 
@@ -415,7 +415,7 @@ export default function App() {
   function createTowers() {
     const from = Math.max(1, Math.min(rangeFrom, rangeTo))
     const to = Math.max(rangeFrom, rangeTo)
-    const prefix  = (currentTplConfig?.towerPrefix || 'T').trim()
+    const prefix = (currentTplConfig?.towerPrefix || 'T').trim()
     const zeroPad = currentTplConfig?.zeroPad || false
     const pad = (n) => zeroPad ? String(n).padStart(2, '0') : String(n)
     const list = []
@@ -487,25 +487,27 @@ export default function App() {
   function buildExportPlan(towerIds = null) {
     const pid = slug(project.id)
     const cfg = currentTplConfig
+    // export root folder name comes from the template (blank → project ID)
+    const rootName = (cfg?.rootFolder && slug(cfg.rootFolder)) || pid
     const towerKey = cfg?.towerPrefix?.trim() || 'T'
-    const zeroPad  = cfg?.zeroPad || false
+    const zeroPad = cfg?.zeroPad || false
     const doRename = cfg?.renameImages || false
-    const pattern  = (doRename && cfg?.imagePattern) ? cfg.imagePattern : '{tower}_{subfolder}_{n}'
+    const pattern = (doRename && cfg?.imagePattern) ? cfg.imagePattern : '{tower}_{subfolder}_{n}'
 
     const towerFolderName = (t) => {
       const n = zeroPad ? String(t.num).padStart(2, '0') : String(t.num)
-      return `${pid}_${towerKey}${n}`
+      return `${rootName}_${towerKey}${n}`
     }
-    const ext  = (n) => { const i = n.lastIndexOf('.'); return i > 0 ? n.slice(i) : '' }
+    const ext = (n) => { const i = n.lastIndexOf('.'); return i > 0 ? n.slice(i) : '' }
     const base = (n) => { const i = n.lastIndexOf('.'); return i > 0 ? n.slice(0, i) : n }
     const imgName = (img, towerName, sf, idx) => {
       if (!doRename) return img.name
       return pattern
-        .replaceAll('{project}',   pid)
-        .replaceAll('{tower}',     towerName)
+        .replaceAll('{project}', pid)
+        .replaceAll('{tower}', towerName)
         .replaceAll('{subfolder}', sf ? slug(sf) : 'unsorted')
-        .replaceAll('{original}',  base(img.name))
-        .replaceAll('{n}',         String(idx + 1).padStart(3, '0'))
+        .replaceAll('{original}', base(img.name))
+        .replaceAll('{n}', String(idx + 1).padStart(3, '0'))
         + ext(img.name)
     }
     const uniqueName = (usedSet, nm) => {
@@ -527,7 +529,7 @@ export default function App() {
       const usedRoot = new Set()
       unsorted.forEach((img, idx) => {
         if (!hasFile(img)) { missing++; return }
-        entries.push({ dirParts: [pid, towerName], filename: uniqueName(usedRoot, imgName(img, towerName, null, idx)), file: img.file, id: img.id })
+        entries.push({ dirParts: [rootName, towerName], filename: uniqueName(usedRoot, imgName(img, towerName, null, idx)), file: img.file, id: img.id })
       })
       for (const sf of subfolders) {
         const inSf = imagesInSubfolder(t.id, sf)
@@ -536,18 +538,18 @@ export default function App() {
         const usedSub = new Set()
         inSf.forEach((img, idx) => {
           if (!hasFile(img)) { missing++; return }
-          entries.push({ dirParts: [pid, towerName, subName], filename: uniqueName(usedSub, imgName(img, towerName, sf, idx)), file: img.file, id: img.id })
+          entries.push({ dirParts: [rootName, towerName, subName], filename: uniqueName(usedSub, imgName(img, towerName, sf, idx)), file: img.file, id: img.id })
         })
       }
     }
-    return { pid, entries, missing }
+    return { pid: rootName, entries, missing }
   }
 
   // Remove the just-exported images from the app + IndexedDB to free space.
   async function removeExportedImages(ids) {
     const idSet = new Set(ids)
     setImages(prev => {
-      prev.forEach(img => { if (idSet.has(img.id)) { try { URL.revokeObjectURL(img.url) } catch {} } })
+      prev.forEach(img => { if (idSet.has(img.id)) { try { URL.revokeObjectURL(img.url) } catch { } } })
       return prev.filter(img => !idSet.has(img.id))
     })
     try { await deleteFiles(ids) } catch (e) { console.error(e) }
@@ -591,7 +593,6 @@ export default function App() {
           // can be read-only and every getDirectoryHandle(create)/write fails
           // silently → folder never appears on disk.
           if (destRoot.queryPermission) {
-            let perm = await destRoot.queryPermission({ mode: 'readwrite' })
             if (perm !== 'granted' && destRoot.requestPermission) {
               perm = await destRoot.requestPermission({ mode: 'readwrite' })
             }
@@ -621,71 +622,71 @@ export default function App() {
       { id: taskId, label: pid, done: 0, total: entries.length, status: 'running', name: '', exportedIds: entries.map(e => e.id) },
     ])
 
-    ;(async () => {
-      try {
-        if (destRoot) {
-          const dirCache = new Map()
-          const getDir = async (parts) => {
-            const key = parts.join('/')
-            if (dirCache.has(key)) return dirCache.get(key)
-            let dir = destRoot
-            for (const p of parts) dir = await dir.getDirectoryHandle(p, { create: true })
-            dirCache.set(key, dir)
-            return dir
-          }
-          // write one file with a fallback (some blobs only write as ArrayBuffer)
-          const writeOne = async (dir, filename, file) => {
-            const fh = await dir.getFileHandle(filename, { create: true })
-            const w  = await fh.createWritable()
-            try {
-              await w.write(file)
-            } catch {
-              const buf = await file.arrayBuffer()
-              await w.write(buf)
+      ; (async () => {
+        try {
+          if (destRoot) {
+            const dirCache = new Map()
+            const getDir = async (parts) => {
+              const key = parts.join('/')
+              if (dirCache.has(key)) return dirCache.get(key)
+              let dir = destRoot
+              for (const p of parts) dir = await dir.getDirectoryHandle(p, { create: true })
+              dirCache.set(key, dir)
+              return dir
             }
-            await w.close()
-          }
+            // write one file with a fallback (some blobs only write as ArrayBuffer)
+            const writeOne = async (dir, filename, file) => {
+              const fh = await dir.getFileHandle(filename, { create: true })
+              const w = await fh.createWritable()
+              try {
+                await w.write(file)
+              } catch {
+                const buf = await file.arrayBuffer()
+                await w.write(buf)
+              }
+              await w.close()
+            }
 
-          let done = 0, failed = 0
-          const failNames = []
-          for (const e of entries) {
-            try {
-              const dir = await getDir(e.dirParts)
-              await writeOne(dir, e.filename, e.file)
-            } catch (err) {
-              failed++
-              if (failNames.length < 5) failNames.push(e.filename)
-              console.error('Failed to write', e.dirParts.join('/') + '/' + e.filename, err)
+            let done = 0, failed = 0
+            const failNames = []
+            for (const e of entries) {
+              try {
+                const dir = await getDir(e.dirParts)
+                await writeOne(dir, e.filename, e.file)
+              } catch (err) {
+                failed++
+                if (failNames.length < 5) failNames.push(e.filename)
+                console.error('Failed to write', e.dirParts.join('/') + '/' + e.filename, err)
+              }
+              done++
+              if (done % 5 === 0 || done === entries.length) patchTask(taskId, { done, name: e.filename })
             }
-            done++
-            if (done % 5 === 0 || done === entries.length) patchTask(taskId, { done, name: e.filename })
+            if (done - failed === 0) {
+              throw new Error(`No files could be written (${failed} failed). Check the destination folder's write permission or free space.`)
+            }
+            patchTask(taskId, { status: 'done', done: entries.length, missing: missing + failed })
+            return
+          } else {
+            const zip = new JSZip()
+            for (const e of entries) zip.folder(e.dirParts.join('/')).file(e.filename, e.file)
+            const blob = await zip.generateAsync(
+              { type: 'blob', compression: 'STORE', streamFiles: false },
+              (m) => patchTask(taskId, { done: Math.round((m.percent / 100) * entries.length) })
+            )
+            saveAs(blob, zipName)
           }
-          if (done - failed === 0) {
-            throw new Error(`No files could be written (${failed} failed). Check the destination folder's write permission or free space.`)
-          }
-          patchTask(taskId, { status: 'done', done: entries.length, missing: missing + failed })
-          return
-        } else {
-          const zip = new JSZip()
-          for (const e of entries) zip.folder(e.dirParts.join('/')).file(e.filename, e.file)
-          const blob = await zip.generateAsync(
-            { type: 'blob', compression: 'STORE', streamFiles: false },
-            (m) => patchTask(taskId, { done: Math.round((m.percent / 100) * entries.length) })
-          )
-          saveAs(blob, zipName)
+          patchTask(taskId, { status: 'done', done: entries.length, missing })
+        } catch (err) {
+          console.error('Export failed:', err)
+          const msg = String(err?.message || err)
+          patchTask(taskId, {
+            status: 'error',
+            error: /allocation failed|out of memory|quota/i.test(msg)
+              ? 'Ran out of memory/space — use Chrome/Edge folder export.'
+              : msg,
+          })
         }
-        patchTask(taskId, { status: 'done', done: entries.length, missing })
-      } catch (err) {
-        console.error('Export failed:', err)
-        const msg = String(err?.message || err)
-        patchTask(taskId, {
-          status: 'error',
-          error: /allocation failed|out of memory|quota/i.test(msg)
-            ? 'Ran out of memory/space — use Chrome/Edge folder export.'
-            : msg,
-        })
-      }
-    })()
+      })()
   }
 
   // ---------- drag & drop helpers ----------
@@ -1332,13 +1333,13 @@ export default function App() {
 }
 
 function ProjectModal({ project, allTemplateNames, allTemplates, customTpls, onSave, onClose }) {
-  const [name,     setName]     = useState(project.name)
-  const [id,       setId]       = useState(project.id)
-  const [tplName,  setTplName]  = useState(project.template || allTemplateNames[0])
+  const [name, setName] = useState(project.name)
+  const [id, setId] = useState(project.id)
+  const [tplName, setTplName] = useState(project.template || allTemplateNames[0])
   const slug = (s) => (s || '').trim().replace(/\s+/g, '_').replace(/[^\w-]/g, '')
   const pid = slug(id) || 'PRJ-ID'
   const tplSubs = allTemplates[tplName] || []
-  const tplCfg  = customTpls.find(t => t.name === tplName)
+  const tplCfg = customTpls.find(t => t.name === tplName)
   const towerKey = tplCfg?.towerPrefix?.trim() || 'T'   // template's tower key
   const towerEx = `${pid}_${towerKey}1`
 
@@ -1399,7 +1400,7 @@ function ProjectModal({ project, allTemplateNames, allTemplates, customTpls, onS
             <button className="admin-btn cancel" onClick={onClose}>Cancel</button>
             <button className="admin-btn save" onClick={() => onSave({
               name: name.trim() || 'Untitled Project',
-              id:   id.trim()   || project.id,
+              id: id.trim() || project.id,
               template: tplName,
             })}>
               💾 Save Project

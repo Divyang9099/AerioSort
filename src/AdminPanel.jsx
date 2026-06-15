@@ -30,6 +30,7 @@ function saveAll(list) {
 
 const EMPTY_FORM = {
   name: '',
+  rootFolder: '',              // export root folder name (blank → project ID)
   towerPrefix: 'T',           // tower folder prefix in ZIP → T1, T2
   zeroPad: false,              // T01, T02 padding
   noSubfolders: false,         // when true, towers have no subfolders at all
@@ -56,6 +57,7 @@ function draftHasContent(f) {
   if (!f) return false
   return !!(
     f.name?.trim() ||
+    f.rootFolder?.trim() ||
     f.subfolders?.some(s => s.trim()) ||
     f.noSubfolders ||
     f.renameImages ||
@@ -134,6 +136,7 @@ export default function AdminPanel({ onClose, customTemplates, setCustomTemplate
     const hasNoSf = !t.subfolders || t.subfolders.length === 0
     setForm({
       name:         t.name,
+      rootFolder:   t.rootFolder   || '',
       towerPrefix:  t.towerPrefix  || 'T',
       zeroPad:      t.zeroPad      || false,
       noSubfolders: hasNoSf,
@@ -163,6 +166,7 @@ export default function AdminPanel({ onClose, customTemplates, setCustomTemplate
 
     const entry = {
       name,
+      rootFolder:   form.rootFolder.trim(),
       towerPrefix:  form.towerPrefix.trim() || 'T',
       zeroPad:      form.zeroPad,
       subfolders:   sfs,
@@ -287,6 +291,20 @@ export default function AdminPanel({ onClose, customTemplates, setCustomTemplate
                 value={form.name}
                 onChange={e => setField('name', e.target.value)}
               />
+            </div>
+
+            {/* Export root folder name */}
+            <div className="admin-field">
+              <label>Export Folder Name</label>
+              <input
+                placeholder="e.g. Bidar (blank = use Project ID)"
+                value={form.rootFolder}
+                onChange={e => setField('rootFolder', e.target.value)}
+              />
+              <div className="admin-hint" style={{ marginTop: 4 }}>
+                Top-level folder that holds all towers when you export.
+                Leave blank to use the project ID.
+              </div>
             </div>
 
             {/* Tower folder naming */}
