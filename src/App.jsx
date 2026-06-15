@@ -5,7 +5,7 @@ import { TEMPLATES, TEMPLATE_NAMES } from './templates.js'
 import Lightbox from './Lightbox.jsx'
 import MapView from './MapView.jsx'
 import AdminPanel, { loadCustomTemplates } from './AdminPanel.jsx'
-import { saveFiles, loadAllFiles, clearFiles } from './db.js'
+import { saveFiles, loadAllFiles, clearFiles, deleteFiles } from './db.js'
 
 let uid = 0
 const nextId = () => `img_${uid++}`
@@ -30,6 +30,7 @@ export default function App() {
   const [selectedTowerId, setSelectedTowerId] = useState(null)
   const [expandedTowerId, setExpandedTowerId] = useState(null)
   const [busy, setBusy] = useState(false)
+  const [exportProgress, setExportProgress] = useState(null) // { done, total, name }
   const [preview, setPreview] = useState(null)
   const [uploadProgress, setUploadProgress] = useState(null)
   const poolColRef = useRef(null)
@@ -474,124 +475,157 @@ export default function App() {
     patch(id, { towerId, subfolder })
   const moveToTowerRoot = (id, towerId) => patch(id, { towerId, subfolder: null })
 
+  // Build the full list of files to export, with their folder path + final name.
+  function buildExportPlan() {
+    const pid = slug(project.id)
+    const cfg = currentTplConfig
+    const towerKey = cfg?.towerPrefix?.trim() || 'T'
+    const zeroPad  = cfg?.zeroPad || false
+    const doRename = cfg?.renameImages || false
+    const pattern  = (doRename && cfg?.imagePattern) ? cfg.imagePattern : '{tower}_{subfolder}_{n}'
+
+    const towerFolderName = (t) => {
+      const n = zeroPad ? String(t.num).padStart(2, '0') : String(t.num)
+      return `${pid}_${towerKey}${n}`
+    }
+    const ext  = (n) => { const i = n.lastIndexOf('.'); return i > 0 ? n.slice(i) : '' }
+    const base = (n) => { const i = n.lastIndexOf('.'); return i > 0 ? n.slice(0, i) : n }
+    const imgName = (img, towerName, sf, idx) => {
+      if (!doRename) return img.name
+      return pattern
+        .replaceAll('{project}',   pid)
+        .replaceAll('{tower}',     towerName)
+        .replaceAll('{subfolder}', sf ? slug(sf) : 'unsorted')
+        .replaceAll('{original}',  base(img.name))
+        .replaceAll('{n}',         String(idx + 1).padStart(3, '0'))
+        + ext(img.name)
+    }
+    const uniqueName = (usedSet, nm) => {
+      if (!usedSet.has(nm)) { usedSet.add(nm); return nm }
+      const b = base(nm), e = ext(nm)
+      let n = 2
+      while (usedSet.has(`${b}_${n}${e}`)) n++
+      const f = `${b}_${n}${e}`; usedSet.add(f); return f
+    }
+    const hasFile = (img) => img.file instanceof Blob && img.file.size > 0
+
+    const entries = [] // { dirParts:[...], filename, file, id }
+    let missing = 0
+    for (const t of towers) {
+      if (imagesByTower(t.id).length === 0) continue
+      const towerName = towerFolderName(t)
+      const unsorted = imagesByTower(t.id).filter(i => !i.subfolder)
+      const usedRoot = new Set()
+      unsorted.forEach((img, idx) => {
+        if (!hasFile(img)) { missing++; return }
+        entries.push({ dirParts: [pid, towerName], filename: uniqueName(usedRoot, imgName(img, towerName, null, idx)), file: img.file, id: img.id })
+      })
+      for (const sf of subfolders) {
+        const inSf = imagesInSubfolder(t.id, sf)
+        if (inSf.length === 0) continue
+        const subName = `${towerName}_${slug(sf)}`
+        const usedSub = new Set()
+        inSf.forEach((img, idx) => {
+          if (!hasFile(img)) { missing++; return }
+          entries.push({ dirParts: [pid, towerName, subName], filename: uniqueName(usedSub, imgName(img, towerName, sf, idx)), file: img.file, id: img.id })
+        })
+      }
+    }
+    return { pid, entries, missing }
+  }
+
+  // Remove the just-exported images from the app + IndexedDB to free space.
+  async function removeExportedImages(ids) {
+    const idSet = new Set(ids)
+    setImages(prev => {
+      prev.forEach(img => { if (idSet.has(img.id)) { try { URL.revokeObjectURL(img.url) } catch {} } })
+      return prev.filter(img => !idSet.has(img.id))
+    })
+    try { await deleteFiles(ids) } catch (e) { console.error(e) }
+  }
+
   async function exportZip() {
-    if (towers.length === 0) {
-      alert('Create some towers first.')
+    if (towers.length === 0) { alert('Create some towers first.'); return }
+
+    const { pid, entries, missing } = buildExportPlan()
+    if (entries.length === 0) {
+      alert(missing > 0
+        ? `Export failed: none of the ${missing} assigned image(s) have a usable file. Re-upload the folder and try again.`
+        : 'Nothing to export. Assign some images to towers first.')
       return
     }
-    // ── PROJECT ID is the root of everything (no project name) ──
-    const pid = slug(project.id)
-    const name = window.prompt('Enter ZIP file name:', pid)
-    if (name === null) return // user cancelled
-    const zipName = (name.trim() || pid) + (name.endsWith('.zip') ? '' : '.zip')
+
+    const canFolder = typeof window.showDirectoryPicker === 'function'
     setBusy(true)
     try {
-      const zip = new JSZip()
-      const cfg = currentTplConfig  // null for built-in templates
-      // tower folder KEY comes from the selected template (e.g. "poll", "T", "Pole")
-      const towerKey = cfg?.towerPrefix?.trim() || 'T'
-      const zeroPad  = cfg?.zeroPad || false
-      const doRename = cfg?.renameImages || false
-      const pattern  = (doRename && cfg?.imagePattern)
-        ? cfg.imagePattern
-        : '{tower}_{subfolder}_{n}'
-
-      // root folder = project ID
-      const root = zip.folder(pid)
-
-      // tower folder = projectID_<templateKey><num>   e.g. PRJ-0126_poll1
-      const towerFolderName = (t) => {
-        const n = zeroPad ? String(t.num).padStart(2, '0') : String(t.num)
-        return `${pid}_${towerKey}${n}`
-      }
-      const ext  = (n) => { const i = n.lastIndexOf('.'); return i > 0 ? n.slice(i) : '' }
-      const base = (n) => { const i = n.lastIndexOf('.'); return i > 0 ? n.slice(0, i) : n }
-
-      const imgName = (img, towerName, sf, idx) => {
-        // "Keep original filenames" → use the real file name, unchanged
-        if (!doRename) return img.name
-        return pattern
-          .replaceAll('{project}',   pid)
-          .replaceAll('{tower}',     towerName)
-          .replaceAll('{subfolder}', sf ? slug(sf) : 'unsorted')
-          .replaceAll('{original}',  base(img.name))
-          .replaceAll('{n}',         String(idx + 1).padStart(3, '0'))
-          + ext(img.name)
-      }
-
-      // ensure no two files in the same folder collide (e.g. duplicate originals)
-      const uniqueName = (usedSet, name) => {
-        if (!usedSet.has(name)) { usedSet.add(name); return name }
-        const b = base(name), e = ext(name)
-        let n = 2
-        while (usedSet.has(`${b}_${n}${e}`)) n++
-        const finalName = `${b}_${n}${e}`
-        usedSet.add(finalName)
-        return finalName
-      }
-
-      // a File/Blob is required to add an image to the zip
-      const hasFile = (img) => img.file instanceof Blob && img.file.size > 0
-      let added = 0
-      let missing = 0
-
-      for (const t of towers) {
-        // skip towers with no images at all — no empty folder in the zip
-        if (imagesByTower(t.id).length === 0) continue
-        const towerName = towerFolderName(t)
-        const folder = root.folder(towerName)
-        // unsorted images directly in the tower folder
-        const unsorted = imagesByTower(t.id).filter(i => !i.subfolder)
-        const folderUsed = new Set()
-        unsorted.forEach((img, idx) => {
-          if (!hasFile(img)) { missing++; return }
-          folder.file(uniqueName(folderUsed, imgName(img, towerName, null, idx)), img.file); added++
-        })
-        // subfolders use the template's subfolder key names — only create non-empty ones
-        for (const sf of subfolders) {
-          const inSf = imagesInSubfolder(t.id, sf)
-          if (inSf.length === 0) continue
-          const subName = `${towerName}_${slug(sf)}`
-          const sub  = folder.folder(subName)
-          const subUsed = new Set()
-          inSf.forEach((img, idx) => {
-            if (!hasFile(img)) { missing++; return }
-            sub.file(uniqueName(subUsed, imgName(img, towerName, sf, idx)), img.file); added++
-          })
+      if (canFolder) {
+        // ── write the folder structure straight to disk (handles 100s of GB) ──
+        let destRoot
+        try {
+          destRoot = await window.showDirectoryPicker({ mode: 'readwrite' })
+        } catch (e) {
+          if (e?.name === 'AbortError') return // user cancelled the folder picker
+          throw e
         }
-      }
 
-      if (added === 0) {
-        alert(
-          missing > 0
-            ? `Export failed: none of the ${missing} assigned image(s) have a usable file.\n\nThis usually happens after reloading the page if the images were not re-saved. Re-upload the folder and try again.`
-            : 'Nothing to export. Assign some images to towers first.'
+        const dirCache = new Map()
+        const getDir = async (parts) => {
+          const key = parts.join('/')
+          if (dirCache.has(key)) return dirCache.get(key)
+          let dir = destRoot
+          for (const p of parts) dir = await dir.getDirectoryHandle(p, { create: true })
+          dirCache.set(key, dir)
+          return dir
+        }
+
+        setExportProgress({ done: 0, total: entries.length, name: '' })
+        let done = 0
+        for (const e of entries) {
+          const dir = await getDir(e.dirParts)
+          const fh = await dir.getFileHandle(e.filename, { create: true })
+          const w  = await fh.createWritable()
+          await w.write(e.file)
+          await w.close()
+          done++
+          if (done % 5 === 0 || done === entries.length) {
+            setExportProgress({ done, total: entries.length, name: e.filename })
+          }
+        }
+
+        setExportProgress(null)
+        const exportedIds = entries.map(e => e.id)
+        const ok = window.confirm(
+          `✓ Exported ${exportedIds.length} image(s) to the "${pid}" folder.` +
+          (missing > 0 ? `\n${missing} skipped (file unreadable).` : '') +
+          `\n\nRemove these ${exportedIds.length} exported image(s) from the app to free space?`
         )
-        return
-      }
-
-      // STORE = no compression (drone JPEGs don't shrink) → far less memory/CPU.
-      // streamFiles:false writes a standard local header with CRC/size up front
-      // (streamFiles:true uses data descriptors that Windows Explorer rejects).
-      const blob = await zip.generateAsync({
-        type: 'blob',
-        compression: 'STORE',
-        streamFiles: false,
-      })
-      saveAs(blob, zipName)
-
-      if (missing > 0) {
-        alert(`Exported ${added} image(s). ${missing} image(s) were skipped because their file could not be read (try re-uploading those).`)
+        if (ok) await removeExportedImages(exportedIds)
+      } else {
+        // ── fallback: small datasets only — build one zip blob and download it ──
+        const name = window.prompt('Enter ZIP file name:', pid)
+        if (name === null) return
+        const zipName = (name.trim() || pid) + (name.endsWith('.zip') ? '' : '.zip')
+        const zip = new JSZip()
+        for (const e of entries) {
+          zip.folder(e.dirParts.join('/')).file(e.filename, e.file)
+        }
+        const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE', streamFiles: false })
+        saveAs(blob, zipName)
+        if (window.confirm(`✓ Exported ${entries.length} image(s).\n\nRemove them from the app to free space?`)) {
+          await removeExportedImages(entries.map(e => e.id))
+        }
       }
     } catch (err) {
       console.error('Export failed:', err)
+      setExportProgress(null)
       const msg = String(err?.message || err)
-      if (/allocation failed|out of memory|maximum call stack/i.test(msg)) {
-        alert('Export failed: ran out of memory building the ZIP.\n\nTry exporting fewer towers at a time, or use a Chromium browser (Chrome/Edge) which streams the ZIP to disk.')
+      if (/allocation failed|out of memory|quota/i.test(msg)) {
+        alert('Export failed: ran out of memory/space.\n\nUse Chrome or Edge (folder export streams to disk and handles any size).')
       } else {
         alert('Export failed: ' + msg)
       }
     } finally {
+      setExportProgress(null)
       setBusy(false)
     }
   }
@@ -668,9 +702,29 @@ export default function App() {
           ⚙ Templates
         </button>
         <button className="export" disabled={busy} onClick={exportZip}>
-          {busy ? 'Zipping…' : '⬇ Export ZIP'}
+          {busy ? 'Exporting…' : '⬇ Export'}
         </button>
       </header>
+
+      {/* ============ EXPORT PROGRESS OVERLAY ============ */}
+      {exportProgress && (
+        <div className="export-overlay">
+          <div className="export-box">
+            <div className="export-title">Exporting images to your folder…</div>
+            <div className="export-count">
+              {exportProgress.done} / {exportProgress.total}
+            </div>
+            <div className="export-track">
+              <div className="export-fill"
+                style={{ width: `${(exportProgress.done / exportProgress.total) * 100}%` }} />
+            </div>
+            {exportProgress.name && (
+              <div className="export-current" title={exportProgress.name}>{exportProgress.name}</div>
+            )}
+            <div className="export-hint">Keep this tab open until it finishes.</div>
+          </div>
+        </div>
+      )}
 
       {/* ============ THREE COLUMNS ============ */}
       <main

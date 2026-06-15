@@ -45,3 +45,16 @@ export async function clearFiles() {
     tx.onerror    = (e) => reject(e.target.error)
   })
 }
+
+export async function deleteFiles(ids) {
+  // remove specific files (e.g. after they've been exported) to free space
+  if (!ids?.length) return
+  const db = await openDB()
+  const tx = db.transaction(STORE, 'readwrite')
+  const st = tx.objectStore(STORE)
+  ids.forEach(id => st.delete(id))
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = resolve
+    tx.onerror    = (e) => reject(e.target.error)
+  })
+}
