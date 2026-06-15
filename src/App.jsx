@@ -29,8 +29,9 @@ export default function App() {
   const [images, setImages] = useState([])
   const [selectedTowerId, setSelectedTowerId] = useState(null)
   const [expandedTowerId, setExpandedTowerId] = useState(null)
-  const [busy, setBusy] = useState(false)
-  const [exportProgress, setExportProgress] = useState(null) // { done, total, name }
+  // background export tasks (Google-Drive-style panel, bottom-right)
+  const [exportTasks, setExportTasks] = useState([]) // {id,label,done,total,status,name,error,exportedIds,removed}
+  const exportSeq = useRef(0)
   const [preview, setPreview] = useState(null)
   const [uploadProgress, setUploadProgress] = useState(null)
   const poolColRef = useRef(null)
@@ -544,6 +545,12 @@ export default function App() {
     try { await deleteFiles(ids) } catch (e) { console.error(e) }
   }
 
+  // task helpers for the background export panel
+  const patchTask = (id, patch) =>
+    setExportTasks(prev => prev.map(t => (t.id === id ? { ...t, ...patch } : t)))
+  const dismissTask = (id) =>
+    setExportTasks(prev => prev.filter(t => t.id !== id))
+
   async function exportZip() {
     if (towers.length === 0) { alert('Create some towers first.'); return }
 
@@ -556,78 +563,72 @@ export default function App() {
     }
 
     const canFolder = typeof window.showDirectoryPicker === 'function'
-    setBusy(true)
-    try {
-      if (canFolder) {
-        // ── write the folder structure straight to disk (handles 100s of GB) ──
-        let destRoot
-        try {
-          destRoot = await window.showDirectoryPicker({ mode: 'readwrite' })
-        } catch (e) {
-          if (e?.name === 'AbortError') return // user cancelled the folder picker
-          throw e
-        }
 
-        const dirCache = new Map()
-        const getDir = async (parts) => {
-          const key = parts.join('/')
-          if (dirCache.has(key)) return dirCache.get(key)
-          let dir = destRoot
-          for (const p of parts) dir = await dir.getDirectoryHandle(p, { create: true })
-          dirCache.set(key, dir)
-          return dir
-        }
-
-        setExportProgress({ done: 0, total: entries.length, name: '' })
-        let done = 0
-        for (const e of entries) {
-          const dir = await getDir(e.dirParts)
-          const fh = await dir.getFileHandle(e.filename, { create: true })
-          const w  = await fh.createWritable()
-          await w.write(e.file)
-          await w.close()
-          done++
-          if (done % 5 === 0 || done === entries.length) {
-            setExportProgress({ done, total: entries.length, name: e.filename })
-          }
-        }
-
-        setExportProgress(null)
-        const exportedIds = entries.map(e => e.id)
-        const ok = window.confirm(
-          `✓ Exported ${exportedIds.length} image(s) to the "${pid}" folder.` +
-          (missing > 0 ? `\n${missing} skipped (file unreadable).` : '') +
-          `\n\nRemove these ${exportedIds.length} exported image(s) from the app to free space?`
-        )
-        if (ok) await removeExportedImages(exportedIds)
-      } else {
-        // ── fallback: small datasets only — build one zip blob and download it ──
-        const name = window.prompt('Enter ZIP file name:', pid)
-        if (name === null) return
-        const zipName = (name.trim() || pid) + (name.endsWith('.zip') ? '' : '.zip')
-        const zip = new JSZip()
-        for (const e of entries) {
-          zip.folder(e.dirParts.join('/')).file(e.filename, e.file)
-        }
-        const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE', streamFiles: false })
-        saveAs(blob, zipName)
-        if (window.confirm(`✓ Exported ${entries.length} image(s).\n\nRemove them from the app to free space?`)) {
-          await removeExportedImages(entries.map(e => e.id))
-        }
+    // The folder/save picker MUST run inside the click gesture — do it now.
+    let destRoot = null, zipName = null
+    if (canFolder) {
+      try {
+        destRoot = await window.showDirectoryPicker({ mode: 'readwrite' })
+      } catch (e) {
+        if (e?.name === 'AbortError') return // cancelled
+        alert('Export failed: ' + (e?.message || e)); return
       }
-    } catch (err) {
-      console.error('Export failed:', err)
-      setExportProgress(null)
-      const msg = String(err?.message || err)
-      if (/allocation failed|out of memory|quota/i.test(msg)) {
-        alert('Export failed: ran out of memory/space.\n\nUse Chrome or Edge (folder export streams to disk and handles any size).')
-      } else {
-        alert('Export failed: ' + msg)
-      }
-    } finally {
-      setExportProgress(null)
-      setBusy(false)
+    } else {
+      const name = window.prompt('Enter ZIP file name:', pid)
+      if (name === null) return
+      zipName = (name.trim() || pid) + (name.endsWith('.zip') ? '' : '.zip')
     }
+
+    // create a background task and run the rest WITHOUT blocking the UI
+    const taskId = ++exportSeq.current
+    setExportTasks(prev => [
+      ...prev,
+      { id: taskId, label: pid, done: 0, total: entries.length, status: 'running', name: '', exportedIds: entries.map(e => e.id) },
+    ])
+
+    ;(async () => {
+      try {
+        if (destRoot) {
+          const dirCache = new Map()
+          const getDir = async (parts) => {
+            const key = parts.join('/')
+            if (dirCache.has(key)) return dirCache.get(key)
+            let dir = destRoot
+            for (const p of parts) dir = await dir.getDirectoryHandle(p, { create: true })
+            dirCache.set(key, dir)
+            return dir
+          }
+          let done = 0
+          for (const e of entries) {
+            const dir = await getDir(e.dirParts)
+            const fh = await dir.getFileHandle(e.filename, { create: true })
+            const w  = await fh.createWritable()
+            await w.write(e.file)
+            await w.close()
+            done++
+            if (done % 5 === 0 || done === entries.length) patchTask(taskId, { done, name: e.filename })
+          }
+        } else {
+          const zip = new JSZip()
+          for (const e of entries) zip.folder(e.dirParts.join('/')).file(e.filename, e.file)
+          const blob = await zip.generateAsync(
+            { type: 'blob', compression: 'STORE', streamFiles: false },
+            (m) => patchTask(taskId, { done: Math.round((m.percent / 100) * entries.length) })
+          )
+          saveAs(blob, zipName)
+        }
+        patchTask(taskId, { status: 'done', done: entries.length, missing })
+      } catch (err) {
+        console.error('Export failed:', err)
+        const msg = String(err?.message || err)
+        patchTask(taskId, {
+          status: 'error',
+          error: /allocation failed|out of memory|quota/i.test(msg)
+            ? 'Ran out of memory/space — use Chrome/Edge folder export.'
+            : msg,
+        })
+      }
+    })()
   }
 
   // ---------- drag & drop helpers ----------
@@ -701,28 +702,66 @@ export default function App() {
         <button className="admin-open-btn" onClick={() => setShowAdmin(true)} title="Template Manager">
           ⚙ Templates
         </button>
-        <button className="export" disabled={busy} onClick={exportZip}>
-          {busy ? 'Exporting…' : '⬇ Export'}
+        <button className="export" onClick={exportZip}>
+          ⬇ Export
         </button>
       </header>
 
-      {/* ============ EXPORT PROGRESS OVERLAY ============ */}
-      {exportProgress && (
-        <div className="export-overlay">
-          <div className="export-box">
-            <div className="export-title">Exporting images to your folder…</div>
-            <div className="export-count">
-              {exportProgress.done} / {exportProgress.total}
-            </div>
-            <div className="export-track">
-              <div className="export-fill"
-                style={{ width: `${(exportProgress.done / exportProgress.total) * 100}%` }} />
-            </div>
-            {exportProgress.name && (
-              <div className="export-current" title={exportProgress.name}>{exportProgress.name}</div>
-            )}
-            <div className="export-hint">Keep this tab open until it finishes.</div>
-          </div>
+      {/* ============ BACKGROUND EXPORT PANEL (bottom-right) ============ */}
+      {exportTasks.length > 0 && (
+        <div className="xfer-panel">
+          {exportTasks.map(t => {
+            const pct = t.total ? Math.min(100, Math.round((t.done / t.total) * 100)) : 0
+            return (
+              <div key={t.id} className={'xfer-card xfer-' + t.status}>
+                <div className="xfer-head">
+                  <span className="xfer-icon">
+                    {t.status === 'done' ? '✅' : t.status === 'error' ? '⚠️' : '📤'}
+                  </span>
+                  <span className="xfer-title">
+                    {t.status === 'done' ? 'Export complete' : t.status === 'error' ? 'Export failed' : 'Exporting…'}
+                  </span>
+                  <span className="xfer-proj">{t.label}</span>
+                  {t.status !== 'running' && (
+                    <button className="xfer-x" onClick={() => dismissTask(t.id)} title="Dismiss">✕</button>
+                  )}
+                </div>
+
+                {t.status === 'running' && (
+                  <>
+                    <div className="xfer-track"><div className="xfer-fill" style={{ width: pct + '%' }} /></div>
+                    <div className="xfer-sub">
+                      <span>{t.done} / {t.total} ({pct}%)</span>
+                    </div>
+                    {t.name && <div className="xfer-file" title={t.name}>{t.name}</div>}
+                  </>
+                )}
+
+                {t.status === 'done' && (
+                  <>
+                    <div className="xfer-sub">
+                      {t.done} image(s) saved{t.missing ? ` · ${t.missing} skipped` : ''}.
+                    </div>
+                    {!t.removed ? (
+                      <div className="xfer-actions">
+                        <button className="xfer-btn primary"
+                          onClick={async () => { await removeExportedImages(t.exportedIds); patchTask(t.id, { removed: true }) }}>
+                          Remove from app
+                        </button>
+                        <button className="xfer-btn" onClick={() => dismissTask(t.id)}>Keep</button>
+                      </div>
+                    ) : (
+                      <div className="xfer-sub xfer-removed">✓ Removed from app</div>
+                    )}
+                  </>
+                )}
+
+                {t.status === 'error' && (
+                  <div className="xfer-sub xfer-err">{t.error}</div>
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
 
