@@ -587,6 +587,19 @@ export default function App() {
       } else {
         try {
           destRoot = await window.showDirectoryPicker({ mode: 'readwrite' })
+          // CRITICAL: explicitly ensure WRITE permission, otherwise the handle
+          // can be read-only and every getDirectoryHandle(create)/write fails
+          // silently → folder never appears on disk.
+          if (destRoot.queryPermission) {
+            let perm = await destRoot.queryPermission({ mode: 'readwrite' })
+            if (perm !== 'granted' && destRoot.requestPermission) {
+              perm = await destRoot.requestPermission({ mode: 'readwrite' })
+            }
+            if (perm !== 'granted') {
+              alert('Write permission was not granted for that folder. Pick a folder you can write to (e.g. on D:\\) and allow "Save changes".')
+              return
+            }
+          }
         } catch (e) {
           if (e?.name === 'AbortError') return // cancelled
           // folder picker blocked (e.g. some Vercel/iframe setups) → offer zip
@@ -620,16 +633,38 @@ export default function App() {
             dirCache.set(key, dir)
             return dir
           }
-          let done = 0
-          for (const e of entries) {
-            const dir = await getDir(e.dirParts)
-            const fh = await dir.getFileHandle(e.filename, { create: true })
+          // write one file with a fallback (some blobs only write as ArrayBuffer)
+          const writeOne = async (dir, filename, file) => {
+            const fh = await dir.getFileHandle(filename, { create: true })
             const w  = await fh.createWritable()
-            await w.write(e.file)
+            try {
+              await w.write(file)
+            } catch {
+              const buf = await file.arrayBuffer()
+              await w.write(buf)
+            }
             await w.close()
+          }
+
+          let done = 0, failed = 0
+          const failNames = []
+          for (const e of entries) {
+            try {
+              const dir = await getDir(e.dirParts)
+              await writeOne(dir, e.filename, e.file)
+            } catch (err) {
+              failed++
+              if (failNames.length < 5) failNames.push(e.filename)
+              console.error('Failed to write', e.dirParts.join('/') + '/' + e.filename, err)
+            }
             done++
             if (done % 5 === 0 || done === entries.length) patchTask(taskId, { done, name: e.filename })
           }
+          if (done - failed === 0) {
+            throw new Error(`No files could be written (${failed} failed). Check the destination folder's write permission or free space.`)
+          }
+          patchTask(taskId, { status: 'done', done: entries.length, missing: missing + failed })
+          return
         } else {
           const zip = new JSZip()
           for (const e of entries) zip.folder(e.dirParts.join('/')).file(e.filename, e.file)
