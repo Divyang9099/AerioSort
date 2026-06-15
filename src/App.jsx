@@ -9,6 +9,10 @@ import { saveFiles, loadAllFiles, clearFiles, deleteFiles } from './db.js'
 
 let uid = 0
 const nextId = () => `img_${uid++}`
+
+// natural sort by filename so DJI_..._0001 < _0002 < _0010 (number-aware)
+const byName = (a, b) =>
+  (a.name || '').localeCompare(b.name || '', undefined, { numeric: true, sensitivity: 'base' })
 // keep the counter ahead of any restored ids so new uploads never collide
 const bumpUid = (id) => {
   const n = Number(String(id).replace('img_', ''))
@@ -32,6 +36,8 @@ export default function App() {
   // background export tasks (Google-Drive-style panel, bottom-right)
   const [exportTasks, setExportTasks] = useState([]) // {id,label,done,total,status,name,error,exportedIds,removed}
   const exportSeq = useRef(0)
+  const [showExport, setShowExport] = useState(false)        // export chooser modal
+  const [exportTowerSel, setExportTowerSel] = useState(new Set())
   const [preview, setPreview] = useState(null)
   const [uploadProgress, setUploadProgress] = useState(null)
   const poolColRef = useRef(null)
@@ -191,7 +197,7 @@ export default function App() {
 
   // ---------- derived (must come before selection which references poolImages) ----------
   const poolImages = useMemo(
-    () => images.filter((i) => i.towerId === null),
+    () => images.filter((i) => i.towerId === null).sort(byName),
     [images]
   )
 
@@ -381,12 +387,12 @@ export default function App() {
     clearSelection()
   }
 
-  // ---------- more derived ----------
-  const imagesByTower = (tid) => images.filter((i) => i.towerId === tid)
+  // ---------- more derived (all lists sorted number-wise by filename) ----------
+  const imagesByTower = (tid) => images.filter((i) => i.towerId === tid).sort(byName)
   const unsortedOfTower = (tid) =>
-    images.filter((i) => i.towerId === tid && i.subfolder === null)
+    images.filter((i) => i.towerId === tid && i.subfolder === null).sort(byName)
   const imagesInSubfolder = (tid, sf) =>
-    images.filter((i) => i.towerId === tid && i.subfolder === sf)
+    images.filter((i) => i.towerId === tid && i.subfolder === sf).sort(byName)
 
   const selectedTower = towers.find((t) => t.id === selectedTowerId) || null
 
@@ -477,7 +483,8 @@ export default function App() {
   const moveToTowerRoot = (id, towerId) => patch(id, { towerId, subfolder: null })
 
   // Build the full list of files to export, with their folder path + final name.
-  function buildExportPlan() {
+  // towerIds: optional Set limiting which towers to include (default = all).
+  function buildExportPlan(towerIds = null) {
     const pid = slug(project.id)
     const cfg = currentTplConfig
     const towerKey = cfg?.towerPrefix?.trim() || 'T'
@@ -513,6 +520,7 @@ export default function App() {
     const entries = [] // { dirParts:[...], filename, file, id }
     let missing = 0
     for (const t of towers) {
+      if (towerIds && !towerIds.has(t.id)) continue
       if (imagesByTower(t.id).length === 0) continue
       const towerName = towerFolderName(t)
       const unsorted = imagesByTower(t.id).filter(i => !i.subfolder)
@@ -551,33 +559,47 @@ export default function App() {
   const dismissTask = (id) =>
     setExportTasks(prev => prev.filter(t => t.id !== id))
 
-  async function exportZip() {
+  // open the export chooser (which towers + folder vs zip)
+  function openExport() {
     if (towers.length === 0) { alert('Create some towers first.'); return }
+    const withImgs = towers.filter(t => imagesByTower(t.id).length > 0)
+    if (withImgs.length === 0) { alert('Nothing to export. Assign some images to towers first.'); return }
+    setExportTowerSel(new Set(withImgs.map(t => t.id))) // default: all selected
+    setShowExport(true)
+  }
 
-    const { pid, entries, missing } = buildExportPlan()
+  // method: 'folder' | 'zip' ; towerIds: Set of selected tower ids
+  async function runExport(method, towerIds) {
+    const { pid, entries, missing } = buildExportPlan(towerIds)
     if (entries.length === 0) {
       alert(missing > 0
-        ? `Export failed: none of the ${missing} assigned image(s) have a usable file. Re-upload the folder and try again.`
-        : 'Nothing to export. Assign some images to towers first.')
+        ? `None of the selected images have a usable file. Re-upload and try again.`
+        : 'No images in the selected towers.')
       return
     }
 
-    const canFolder = typeof window.showDirectoryPicker === 'function'
-
     // The folder/save picker MUST run inside the click gesture — do it now.
     let destRoot = null, zipName = null
-    if (canFolder) {
-      try {
-        destRoot = await window.showDirectoryPicker({ mode: 'readwrite' })
-      } catch (e) {
-        if (e?.name === 'AbortError') return // cancelled
-        alert('Export failed: ' + (e?.message || e)); return
+    if (method === 'folder') {
+      if (typeof window.showDirectoryPicker !== 'function') {
+        alert('Folder export needs Chrome or Edge. Falling back to ZIP download.')
+        method = 'zip'
+      } else {
+        try {
+          destRoot = await window.showDirectoryPicker({ mode: 'readwrite' })
+        } catch (e) {
+          if (e?.name === 'AbortError') return // cancelled
+          // folder picker blocked (e.g. some Vercel/iframe setups) → offer zip
+          if (!window.confirm('Folder export is not available here. Download as a ZIP instead?')) return
+          method = 'zip'
+        }
       }
-    } else {
-      const name = window.prompt('Enter ZIP file name:', pid)
-      if (name === null) return
-      zipName = (name.trim() || pid) + (name.endsWith('.zip') ? '' : '.zip')
     }
+    if (method === 'zip') {
+      zipName = pid + '.zip'
+    }
+
+    setShowExport(false)
 
     // create a background task and run the rest WITHOUT blocking the UI
     const taskId = ++exportSeq.current
@@ -702,10 +724,62 @@ export default function App() {
         <button className="admin-open-btn" onClick={() => setShowAdmin(true)} title="Template Manager">
           ⚙ Templates
         </button>
-        <button className="export" onClick={exportZip}>
+        <button className="export" onClick={openExport}>
           ⬇ Export
         </button>
       </header>
+
+      {/* ============ EXPORT CHOOSER MODAL ============ */}
+      {showExport && (() => {
+        const withImgs = towers.filter(t => imagesByTower(t.id).length > 0)
+        const allSelected = withImgs.length > 0 && withImgs.every(t => exportTowerSel.has(t.id))
+        const toggleAll = () =>
+          setExportTowerSel(allSelected ? new Set() : new Set(withImgs.map(t => t.id)))
+        const toggle = (id) => setExportTowerSel(prev => {
+          const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n
+        })
+        const count = exportTowerSel.size
+        return (
+          <div className="admin-overlay" onClick={() => setShowExport(false)}>
+            <div className="admin-modal export-modal" onClick={e => e.stopPropagation()}>
+              <div className="admin-header">
+                <span>⬇ Export — choose towers</span>
+                <button className="admin-close" onClick={() => setShowExport(false)}>✕</button>
+              </div>
+              <div className="export-modal-body">
+                <label className="export-selall">
+                  <input type="checkbox" checked={allSelected} onChange={toggleAll} />
+                  <b>Select all</b> ({withImgs.length} towers with images)
+                </label>
+                <div className="export-tower-grid">
+                  {withImgs.map(t => (
+                    <label key={t.id} className={'export-tower-row' + (exportTowerSel.has(t.id) ? ' on' : '')}>
+                      <input type="checkbox" checked={exportTowerSel.has(t.id)} onChange={() => toggle(t.id)} />
+                      <span className="export-tower-name">{t.label}</span>
+                      <span className="export-tower-count">{imagesByTower(t.id).length}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="admin-actions">
+                <button className="admin-btn cancel" onClick={() => setShowExport(false)}>Cancel</button>
+                <button className="admin-btn edit" disabled={count === 0}
+                  onClick={() => runExport('zip', new Set(exportTowerSel))}>
+                  ⬇ Download ZIP
+                </button>
+                <button className="admin-btn save" disabled={count === 0}
+                  onClick={() => runExport('folder', new Set(exportTowerSel))}>
+                  📁 Export to Folder ({count})
+                </button>
+              </div>
+              <div className="export-modal-hint">
+                <b>Folder</b> = streams to a folder on your PC (best for large data, Chrome/Edge).
+                <b> ZIP</b> = downloads a .zip (works everywhere; for smaller sets).
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* ============ BACKGROUND EXPORT PANEL (bottom-right) ============ */}
       {exportTasks.length > 0 && (
@@ -971,8 +1045,20 @@ export default function App() {
                       {/* sticky move bar for key-folder selection */}
                       {keySelIds.size > 0 && (
                         <div className="move-bar" style={{ marginTop: 4 }}>
-                          <span className="move-bar-label">Move {keySelIds.size} image(s) to subfolder:</span>
+                          <span className="move-bar-label">Move {keySelIds.size} image(s) to:</span>
                           <div className="move-bar-towers">
+                            <button
+                              className="move-bar-btn danger"
+                              onClick={() => {
+                                setImages(prev => prev.map(img =>
+                                  keySelIds.has(img.id) ? { ...img, towerId: null, subfolder: null } : img
+                                ))
+                                clearKeySelection()
+                              }}
+                              title="Send back to Folder 1"
+                            >
+                              ⬅ Folder 1
+                            </button>
                             <button
                               className="move-bar-btn"
                               onClick={() => {
