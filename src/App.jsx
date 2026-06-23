@@ -898,7 +898,7 @@ export default function App() {
             <h2>Folder 1</h2>
             <div style={{ display: 'flex', gap: 8 }}>
               {poolImages.length > 0 && (
-                <button className="map-btn" onClick={() => setShowMap(true)} title="View images on map">
+                <button className="map-btn" onClick={() => { setMapTowerId(null); setShowMap(true) }} title="View images on map">
                   🗺 Map
                 </button>
               )}
@@ -1037,7 +1037,7 @@ export default function App() {
                       <button
                         className="tower-map-btn"
                         title={`View ${t.label} images on map`}
-                        onClick={(e) => { e.stopPropagation(); setSelectedTowerId(t.id); setMapTowerId(t.id) }}
+                        onClick={(e) => { e.stopPropagation(); setShowMap(false); setSelectedTowerId(t.id); setMapTowerId(t.id) }}
                       >
                         🗺
                       </button>
