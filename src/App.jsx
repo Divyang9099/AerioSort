@@ -999,7 +999,8 @@ export default function App() {
           <p className="hint">Drag images here from Folder 1</p>
           <div className="tower-list">
             {towers.map((t) => {
-              const imgs = imagesByTower(t.id)
+              const imgs = imagesByTower(t.id)         // total in tower (badge)
+              const unsorted = unsortedOfTower(t.id)   // only un-subfoldered (shown in grid)
               const isSel = t.id === selectedTowerId
               const isOpen = t.id === expandedTowerId
               return (
@@ -1033,10 +1034,10 @@ export default function App() {
                       {t.label}
                     </button>
                     <span className="badge">{imgs.length}</span>
-                    {imgs.length > 0 && (
+                    {unsorted.length > 0 && (
                       <button
                         className="tower-map-btn"
-                        title={`View ${t.label} images on map`}
+                        title={`Sort ${t.label}'s unsorted images on map`}
                         onClick={(e) => { e.stopPropagation(); setShowMap(false); setSelectedTowerId(t.id); setMapTowerId(t.id) }}
                       >
                         🗺
@@ -1057,15 +1058,15 @@ export default function App() {
                   </div>
                   {isOpen && (
                     <>
-                      {/* key-folder selection toolbar */}
-                      {imgs.length > 0 && (
+                      {/* key-folder selection toolbar (operates on UNSORTED images) */}
+                      {unsorted.length > 0 && (
                         <div className="sel-toolbar" style={{ marginTop: 6 }}>
                           <span className="sel-count">
                             {keySelIds.size > 0
                               ? `${keySelIds.size} selected`
-                              : `${imgs.length} image(s) · Ctrl+click`}
+                              : `${unsorted.length} to sort · Ctrl+click`}
                           </span>
-                          <button className="sel-btn" onClick={() => setKeySelIds(new Set(imgs.map(i => i.id)))}>
+                          <button className="sel-btn" onClick={() => setKeySelIds(new Set(unsorted.map(i => i.id)))}>
                             Select All
                           </button>
                           {keySelIds.size > 0 && (
@@ -1075,18 +1076,21 @@ export default function App() {
                       )}
                       <div className="tiles small key-grid">
                         {/* update ref before rendering for shift-select */}
-                        {(keyImgListRef.current = imgs, null)}
-                        {imgs.map((img) => (
+                        {(keyImgListRef.current = unsorted, null)}
+                        {unsorted.map((img) => (
                           <ImageTile
                             key={img.id}
                             img={img}
                             selected={keySelIds.has(img.id)}
                             onSelect={toggleKeyImgSelect}
                             onDragStart={dragStart}
-                            onOpen={(im) => openPreview(im, imgs, 'tower', t.id)}
-                            tag={img.subfolder || 'unsorted'}
+                            onOpen={(im) => openPreview(im, unsorted, 'tower', t.id)}
+                            tag={'unsorted'}
                           />
                         ))}
+                        {unsorted.length === 0 && (
+                          <div className="empty tiny">All {imgs.length} image(s) sorted into subfolders 🎉 — see the Sub folders panel.</div>
+                        )}
                       </div>
                       {/* sticky move bar for key-folder selection */}
                       {keySelIds.size > 0 && (
@@ -1104,17 +1108,6 @@ export default function App() {
                               title="Send back to Folder 1"
                             >
                               ⬅ Folder 1
-                            </button>
-                            <button
-                              className="move-bar-btn"
-                              onClick={() => {
-                                setImages(prev => prev.map(img =>
-                                  keySelIds.has(img.id) ? { ...img, towerId: t.id, subfolder: null } : img
-                                ))
-                                clearKeySelection()
-                              }}
-                            >
-                              Unsorted
                             </button>
                             {subfolders.map(sf => (
                               <button

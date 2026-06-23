@@ -1283,8 +1283,9 @@ button { cursor: pointer; font-size: 14px; }
 }
 .mapview-towers {
   padding: 6px 8px;
-  display: grid;                          /* 4-column grid for compact viewing */
-  grid-template-columns: repeat(4, 1fr);
+  display: grid;
+  /* auto-fit so short tower chips pack tight and long subfolder names still fit */
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
   gap: 5px;
 }
 
