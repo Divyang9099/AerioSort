@@ -238,7 +238,18 @@ button { cursor: pointer; font-size: 14px; }
   font-size: 14px;
   padding: 2px 0;
 }
-.chev { background: none; border: none; color: var(--muted); }
+.chev { background: none; border: none; color: var(--muted); cursor: pointer; }
+.tower-map-btn {
+  background: #1a2a4a;
+  border: 1px solid #2a4a8a;
+  color: #4f8cff;
+  border-radius: 6px;
+  padding: 1px 7px;
+  font-size: 13px;
+  cursor: pointer;
+  line-height: 1.4;
+}
+.tower-map-btn:hover { background: #22386a; border-color: #4f8cff; }
 
 /* ---------- SUBFOLDERS ---------- */
 .remaining, .subfolder {

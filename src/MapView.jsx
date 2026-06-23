@@ -10,7 +10,14 @@ import { parseKML } from './kmlParser.js'
 const gpsCache = new Map() // key → { lat, lon } | null
 const gpsKey = (img) => `${img.name}|${img.file?.size ?? 0}`
 
-export default function MapView({ allImages, towers, onAssign, onClose }) {
+export default function MapView({
+  dotImages,                 // images to plot as dots
+  moveTargets,               // [{ id, label, count }] — move destinations
+  onMove,                    // (imgId, targetId) => void
+  title = '🗺 Map Sort',
+  targetNoun = 'tower',      // wording in the move bar ("...to tower"/"...to subfolder")
+  onClose,
+}) {
   const mapElRef  = useRef(null)
   const mapRef    = useRef(null)
   const markerMap = useRef({})   // imgId → L.Marker
@@ -29,8 +36,9 @@ export default function MapView({ allImages, towers, onAssign, onClose }) {
   const rbRef    = useRef(null)
   const [rbRect, setRbRect] = useState(null)
 
-  // only pool images have GPS dots (images still in Folder 1)
-  const poolImages = allImages.filter(i => !i.towerId)
+  const poolImages = dotImages // images shown as dots (pool or a tower's images)
+  // stable dependency so the GPS effect doesn't loop on array-identity changes
+  const dotKey = poolImages.map(i => i.id).join(',')
 
   // ── load EXIF GPS (incremental + cached → never re-reads known images) ──────
   useEffect(() => {
@@ -62,7 +70,7 @@ export default function MapView({ allImages, towers, onAssign, onClose }) {
       if (alive) { setCoords(buildCoords()); setLoading(false) }
     })()
     return () => { alive = false }
-  }, [allImages])
+  }, [dotKey])
 
   // ── init Leaflet ───────────────────────────────────────────────────────────
   useEffect(() => {
@@ -388,23 +396,23 @@ export default function MapView({ allImages, towers, onAssign, onClose }) {
             }} />
           )}
 
-          {/* MOVE-TO-TOWER bar pinned to the bottom of the map */}
+          {/* MOVE bar pinned to the bottom of the map */}
           {selArr.length > 0 && (
             <div className="map-move-bar" ref={stopMapInteraction}>
               <div className="map-move-bar-head">
-                <span>Move <b>{selArr.length}</b> image(s) to tower</span>
+                <span>Move <b>{selArr.length}</b> image(s) to {targetNoun}</span>
                 <button className="map-move-bar-clear" onClick={() => setSelectedIds(new Set())}>
                   ✕ Clear
                 </button>
               </div>
               <div className="map-move-bar-grid">
-                {towers.map(t => (
+                {moveTargets.map(t => (
                   <button key={t.id} className="map-move-bar-btn"
                     onClick={() => {
-                      selArr.forEach(id => onAssign(id, t.id))
+                      selArr.forEach(id => onMove(id, t.id))
                       setSelectedIds(new Set())
                     }}>
-                    {t.id}
+                    {t.label}
                   </button>
                 ))}
               </div>
@@ -415,7 +423,7 @@ export default function MapView({ allImages, towers, onAssign, onClose }) {
         {/* SIDE PANEL — inside the row so the map gets remaining height */}
       <div className="mapview-panel">
         <div className="mapview-panel-head">
-          🗺 Map Sort
+          {title}
           <button className="mapview-close" onClick={onClose}>✕</button>
         </div>
 
@@ -430,18 +438,16 @@ export default function MapView({ allImages, towers, onAssign, onClose }) {
             }
           </div>
 
-          {/* tower list with live counts */}
-          <div className="mapview-tower-section-label">Towers</div>
+          {/* move-target list with live counts */}
+          <div className="mapview-tower-section-label">{targetNoun === 'subfolder' ? 'Subfolders' : 'Towers'}</div>
           <div className="mapview-towers">
-            {towers.map(t => (
+            {moveTargets.map(t => (
               <div key={t.id} className="mapview-tower">
                 <span className="mapview-tower-label">{t.label}</span>
-                <span className="mapview-tower-count">
-                  {allImages.filter(i => i.towerId === t.id).length}
-                </span>
+                {t.count != null && <span className="mapview-tower-count">{t.count}</span>}
               </div>
             ))}
-            {towers.length === 0 && <p className="mapview-empty">Create towers first.</p>}
+            {moveTargets.length === 0 && <p className="mapview-empty">Nothing to sort into.</p>}
           </div>
         </div>{/* end mapview-panel-body */}
 

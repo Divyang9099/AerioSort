@@ -91,6 +91,7 @@ export default function App() {
     }
   }, [])
   const [showMap, setShowMap] = useState(false)
+  const [mapTowerId, setMapTowerId] = useState(null) // tower whose images show on the map
   const [showAdmin, setShowAdmin] = useState(false)
   const [customTpls, setCustomTpls] = useState(() => loadCustomTemplates())
 
@@ -1034,6 +1035,15 @@ export default function App() {
                     <span className="badge">{imgs.length}</span>
                     {imgs.length > 0 && (
                       <button
+                        className="tower-map-btn"
+                        title={`View ${t.label} images on map`}
+                        onClick={(e) => { e.stopPropagation(); setSelectedTowerId(t.id); setMapTowerId(t.id) }}
+                      >
+                        🗺
+                      </button>
+                    )}
+                    {imgs.length > 0 && (
+                      <button
                         className="chev"
                         onClick={() => {
                           const next = isOpen ? null : t.id
@@ -1302,14 +1312,43 @@ export default function App() {
       )}
 
       {/* ============ MAP VIEW ============ */}
+      {/* Folder 1 map — plot pool images, move them to towers */}
       {showMap && (
         <MapView
-          allImages={images}
-          towers={towers}
-          onAssign={(imgId, towerId) => moveToTower(imgId, towerId)}
+          dotImages={poolImages}
+          moveTargets={towers.map(t => ({ id: t.id, label: t.label, count: imagesByTower(t.id).length }))}
+          onMove={(imgId, towerId) => moveToTower(imgId, towerId)}
+          title="🗺 Map Sort — Folder 1"
+          targetNoun="tower"
           onClose={() => setShowMap(false)}
         />
       )}
+
+      {/* Tower map — plot a tower's images, move them into its subfolders */}
+      {mapTowerId && (() => {
+        const tower = towers.find(t => t.id === mapTowerId)
+        if (!tower) return null
+        const targets = [
+          { id: '__pool__', label: '⬅ Folder 1' },
+          { id: '__unsorted__', label: 'Unsorted', count: unsortedOfTower(mapTowerId).length },
+          ...subfolders.map(sf => ({ id: 'sf:' + sf, label: sf, count: imagesInSubfolder(mapTowerId, sf).length })),
+        ]
+        const onMove = (imgId, target) => {
+          if (target === '__pool__') moveToPool(imgId)
+          else if (target === '__unsorted__') moveToTowerRoot(imgId, mapTowerId)
+          else if (target.startsWith('sf:')) moveToSubfolder(imgId, mapTowerId, target.slice(3))
+        }
+        return (
+          <MapView
+            dotImages={imagesByTower(mapTowerId)}
+            moveTargets={targets}
+            onMove={onMove}
+            title={`🗺 Map Sort — ${tower.label}`}
+            targetNoun="subfolder"
+            onClose={() => setMapTowerId(null)}
+          />
+        )
+      })()}
 
       {/* ============ FULL-SCREEN PREVIEW ============ */}
       {preview && (
