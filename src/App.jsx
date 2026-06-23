@@ -1328,19 +1328,19 @@ export default function App() {
       {mapTowerId && (() => {
         const tower = towers.find(t => t.id === mapTowerId)
         if (!tower) return null
+        // map shows only the tower's UNSORTED images — once sorted into a
+        // subfolder, the dot disappears (that's the "remove from map" the user wants)
         const targets = [
           { id: '__pool__', label: '⬅ Folder 1' },
-          { id: '__unsorted__', label: 'Unsorted', count: unsortedOfTower(mapTowerId).length },
           ...subfolders.map(sf => ({ id: 'sf:' + sf, label: sf, count: imagesInSubfolder(mapTowerId, sf).length })),
         ]
         const onMove = (imgId, target) => {
           if (target === '__pool__') moveToPool(imgId)
-          else if (target === '__unsorted__') moveToTowerRoot(imgId, mapTowerId)
           else if (target.startsWith('sf:')) moveToSubfolder(imgId, mapTowerId, target.slice(3))
         }
         return (
           <MapView
-            dotImages={imagesByTower(mapTowerId)}
+            dotImages={unsortedOfTower(mapTowerId)}
             moveTargets={targets}
             onMove={onMove}
             title={`🗺 Map Sort — ${tower.label}`}
