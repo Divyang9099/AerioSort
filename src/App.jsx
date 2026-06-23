@@ -1033,7 +1033,14 @@ export default function App() {
                     >
                       {t.label}
                     </button>
-                    <span className="badge">{imgs.length}</span>
+                    <span
+                      className="badge"
+                      title={unsorted.length === imgs.length
+                        ? `${imgs.length} image(s) in ${t.label}`
+                        : `${unsorted.length} left to sort · ${imgs.length} total in ${t.label}`}
+                    >
+                      {unsorted.length === imgs.length ? imgs.length : `${unsorted.length}/${imgs.length}`}
+                    </span>
                     {unsorted.length > 0 && (
                       <button
                         className="tower-map-btn"
