@@ -28,13 +28,33 @@ function saveAll(list) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(list))
 }
 
+// ── subfolder TREE helpers (unlimited nesting) ──────────────────────────────
+// A tree node is { name, children: node[] }. Legacy templates stored a flat
+// string[] — toTree() upgrades either shape into the node form.
+function toTree(nodes) {
+  if (!Array.isArray(nodes)) return [{ name: '', children: [] }]
+  const t = nodes.map(n =>
+    typeof n === 'string' ? { name: n, children: [] } : { name: n.name || '', children: toTree(n.children) }
+  )
+  return t.length ? t : [{ name: '', children: [] }]
+}
+// drop nameless nodes; trim names (whole subtree of a nameless node is dropped)
+function pruneTree(nodes) {
+  return (nodes || [])
+    .map(n => ({ name: (n.name || '').trim(), children: pruneTree(n.children) }))
+    .filter(n => n.name)
+}
+function treeHasName(nodes) {
+  return (nodes || []).some(n => (n.name || '').trim() || treeHasName(n.children))
+}
+
 const EMPTY_FORM = {
   name: '',
   rootFolder: '',              // export root folder name (blank → project ID)
   towerPrefix: 'T',           // tower folder prefix in ZIP → T1, T2
   zeroPad: false,              // T01, T02 padding
   noSubfolders: false,         // when true, towers have no subfolders at all
-  subfolders: [''],            // subfolder names
+  subfolders: [{ name: '', children: [] }], // subfolder TREE
   renameImages: false,         // keep original filenames?
   imagePattern: '{tower}_{subfolder}_{original}', // rename pattern
 }
@@ -44,11 +64,7 @@ function loadDraft() {
   try {
     const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null')
     if (!d) return null
-    return {
-      ...EMPTY_FORM,
-      ...d,
-      subfolders: Array.isArray(d.subfolders) && d.subfolders.length ? d.subfolders : [''],
-    }
+    return { ...EMPTY_FORM, ...d, subfolders: toTree(d.subfolders) }
   } catch { return null }
 }
 
@@ -58,7 +74,7 @@ function draftHasContent(f) {
   return !!(
     f.name?.trim() ||
     f.rootFolder?.trim() ||
-    f.subfolders?.some(s => s.trim()) ||
+    treeHasName(f.subfolders) ||
     f.noSubfolders ||
     f.renameImages ||
     (f.towerPrefix && f.towerPrefix !== EMPTY_FORM.towerPrefix) ||
@@ -116,13 +132,34 @@ export default function AdminPanel({ onClose, customTemplates, setCustomTemplate
   // ── form helpers ──────────────────────────────────────────────────────────
   const setField = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
-  const setSF = (i, v) =>
-    setForm(f => { const a = [...f.subfolders]; a[i] = v; return { ...f, subfolders: a } })
-
-  const addSF    = () => setForm(f => ({ ...f, subfolders: [...f.subfolders, ''] }))
-  const removeSF = (i) => setForm(f => ({
-    ...f, subfolders: f.subfolders.filter((_, j) => j !== i)
-  }))
+  // Recursive tree editing: `path` is an array of child-indices locating a
+  // node, e.g. [1,0] = subfolders[1].children[0]. Unlimited depth.
+  const editTreeAt = (tree, path, fn) => {
+    if (path.length === 0) return fn(tree)
+    const [i, ...rest] = path
+    return tree.map((n, idx) => idx === i ? { ...n, children: editTreeAt(n.children, rest, fn) } : n)
+  }
+  const setSF = (path, name) =>
+    setForm(f => ({
+      ...f,
+      subfolders: editTreeAt(f.subfolders, path.slice(0, -1), (siblings) =>
+        siblings.map((n, i) => i === path[path.length - 1] ? { ...n, name } : n)
+      ),
+    }))
+  // parentPath locates a node whose CHILDREN array gets a new blank node appended;
+  // parentPath = [] appends to the top-level subfolder list.
+  const addSF = (parentPath) =>
+    setForm(f => ({
+      ...f,
+      subfolders: editTreeAt(f.subfolders, parentPath, (children) => [...children, { name: '', children: [] }]),
+    }))
+  const removeSF = (path) =>
+    setForm(f => ({
+      ...f,
+      subfolders: editTreeAt(f.subfolders, path.slice(0, -1), (siblings) =>
+        siblings.filter((_, i) => i !== path[path.length - 1])
+      ),
+    }))
 
   // ── open editor ───────────────────────────────────────────────────────────
   // open the new-template editor, restoring any unsaved draft
@@ -140,7 +177,7 @@ export default function AdminPanel({ onClose, customTemplates, setCustomTemplate
       towerPrefix:  t.towerPrefix  || 'T',
       zeroPad:      t.zeroPad      || false,
       noSubfolders: hasNoSf,
-      subfolders:   hasNoSf ? [''] : [...t.subfolders],
+      subfolders:   toTree(t.subfolders),
       renameImages: t.renameImages || false,
       imagePattern: t.imagePattern || '{tower}_{subfolder}_{original}',
     })
@@ -161,7 +198,7 @@ export default function AdminPanel({ onClose, customTemplates, setCustomTemplate
     if (allNames.includes(name)) { setError('A template with this name already exists.'); return }
 
     // when "no subfolders" is checked, save an empty list and skip the check
-    const sfs = form.noSubfolders ? [] : form.subfolders.map(s => s.trim()).filter(Boolean)
+    const sfs = form.noSubfolders ? [] : pruneTree(form.subfolders)
     if (!form.noSubfolders && !sfs.length) { setError('Add at least one subfolder, or tick “No subfolders”.'); return }
 
     const entry = {
@@ -349,23 +386,17 @@ export default function AdminPanel({ onClose, customTemplates, setCustomTemplate
                   Towers will have <b>no subfolders</b>. Images are sorted only into <b>{previewTower(1)}</b>, <b>{previewTower(2)}</b>…
                 </div>
               ) : (
-                <>
-                  {form.subfolders.map((sf, i) => (
-                    <div key={i} className="admin-sf-row">
-                      <span className="admin-sf-num">{i + 1}</span>
-                      <input
-                        placeholder={`Subfolder ${i + 1}`}
-                        value={sf}
-                        onChange={e => setSF(i, e.target.value)}
-                      />
-                      <button className="admin-sf-del"
-                        onClick={() => removeSF(i)}
-                        disabled={form.subfolders.length === 1}>✕</button>
-                    </div>
-                  ))}
-                  <button className="admin-add-sf" onClick={addSF}>+ Add Subfolder</button>
-                </>
+                <SubfolderTreeEditor
+                  nodes={form.subfolders}
+                  path={[]}
+                  onRename={setSF}
+                  onAdd={addSF}
+                  onRemove={removeSF}
+                />
               )}
+              <div className="admin-hint" style={{ marginTop: 6 }}>
+                Click <b>+ nested</b> under any subfolder to add sub-subfolders — unlimited depth.
+              </div>
             </div>
 
             {/* Export image naming */}
@@ -395,7 +426,7 @@ export default function AdminPanel({ onClose, customTemplates, setCustomTemplate
                     <br />
                     Example: <b>{form.imagePattern
                       .replace('{tower}',     previewTower(1))
-                      .replace('{subfolder}', form.subfolders[0] || 'SF')
+                      .replace('{subfolder}', form.subfolders[0]?.name || 'SF')
                       .replace('{original}',  'DJI_001.JPG')
                       .replace('{n}',         '1')
                     }</b>
@@ -423,6 +454,51 @@ export default function AdminPanel({ onClose, customTemplates, setCustomTemplate
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+// ── recursive subfolder tree editor (unlimited depth) ───────────────────────
+// path: array of indices locating each node from the root, e.g. [1,0].
+function SubfolderTreeEditor({ nodes, path, onRename, onAdd, onRemove, depth = 0 }) {
+  return (
+    <div className="sf-tree" style={depth > 0 ? { marginLeft: 18 } : undefined}>
+      {nodes.map((node, i) => {
+        const nodePath = [...path, i]
+        // nested levels can always be emptied out; the root list needs >=1 row
+        const canDelete = depth > 0 || nodes.length > 1
+        return (
+          <div key={i} className="sf-tree-node">
+            <div className="admin-sf-row">
+              <span className="admin-sf-num">{i + 1}</span>
+              <input
+                placeholder={`Subfolder ${i + 1}`}
+                value={node.name}
+                onChange={e => onRename(nodePath, e.target.value)}
+              />
+              <button className="admin-sf-nest" onClick={() => onAdd(nodePath)} title="Add nested subfolder">
+                + nested
+              </button>
+              <button className="admin-sf-del"
+                onClick={() => onRemove(nodePath)}
+                disabled={!canDelete}>✕</button>
+            </div>
+            {node.children.length > 0 && (
+              <SubfolderTreeEditor
+                nodes={node.children}
+                path={nodePath}
+                onRename={onRename}
+                onAdd={onAdd}
+                onRemove={onRemove}
+                depth={depth + 1}
+              />
+            )}
+          </div>
+        )
+      })}
+      <button className="admin-add-sf" onClick={() => onAdd(path)}>
+        + Add {depth > 0 ? 'Sibling' : 'Subfolder'}
+      </button>
     </div>
   )
 }

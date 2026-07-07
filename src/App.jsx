@@ -13,6 +13,33 @@ const nextId = () => `img_${uid++}`
 // natural sort by filename so DJI_..._0001 < _0002 < _0010 (number-aware)
 const byName = (a, b) =>
   (a.name || '').localeCompare(b.name || '', undefined, { numeric: true, sensitivity: 'base' })
+
+// ── nested subfolder helpers (unlimited depth) ──────────────────────────────
+// An image's location inside a tower is a path array: [] = tower root,
+// ['A'] = in subfolder A, ['A','B'] = in A/B, etc.
+const subPathOf = (img) => img.subPath || []
+const pathEq = (a, b) => a.length === b.length && a.every((v, i) => v === b[i])
+// is `sub` inside the subtree rooted at `prefix`?
+const pathUnder = (sub, prefix) => prefix.length <= sub.length && prefix.every((v, i) => sub[i] === v)
+
+// Normalize a template's subfolders (legacy string[] OR tree) into a tree of
+// { name, children[] } nodes so old templates keep working unchanged.
+const normalizeTree = (nodes) =>
+  (nodes || []).map(n =>
+    typeof n === 'string'
+      ? { name: n, children: [] }
+      : { name: n.name, children: normalizeTree(n.children) }
+  )
+// child folder names available at a given path within the tree
+const childrenAtPath = (tree, path) => {
+  let level = tree
+  for (const seg of path) {
+    const node = level.find(n => n.name === seg)
+    if (!node) return []
+    level = node.children || []
+  }
+  return level.map(n => n.name)
+}
 // keep the counter ahead of any restored ids so new uploads never collide
 const bumpUid = (id) => {
   const n = Number(String(id).replace('img_', ''))
@@ -139,8 +166,12 @@ export default function App() {
             .filter(m => fileMap[m.id])
             .map(m => {
               bumpUid(m.id) // keep nextId() ahead of restored ids
+              // migrate legacy single subfolder → subPath[]
+              const subPath = Array.isArray(m.subPath)
+                ? m.subPath
+                : (m.subfolder ? [m.subfolder] : [])
               return {
-                ...m,
+                id: m.id, name: m.name, towerId: m.towerId, subPath,
                 file: fileMap[m.id],
                 url: URL.createObjectURL(fileMap[m.id]),
               }
@@ -159,7 +190,7 @@ export default function App() {
   useEffect(() => {
     if (!sessionLoaded) return          // don't overwrite with empty state during restore
     const meta = {
-      imageMeta: images.map(({ id, name, towerId, subfolder }) => ({ id, name, towerId, subfolder })),
+      imageMeta: images.map(({ id, name, towerId, subPath }) => ({ id, name, towerId, subPath })),
       towers,
       rangeFrom,
       rangeTo,
@@ -190,7 +221,8 @@ export default function App() {
   const [showProject, setShowProject] = useState(false)
   const projectTag = `${slug(project.name)}_${slug(project.id)}`
 
-  const subfolders = allTemplates[template] || []
+  const subfolders = allTemplates[template] || []      // raw (legacy string[] or tree)
+  const subTree = useMemo(() => normalizeTree(subfolders), [template, customTpls]) // eslint-disable-line react-hooks/exhaustive-deps
   // current template config (for custom templates with extra fields like prefix, rename)
   const currentTplConfig = customTpls.find(t => t.name === template) || null
 
@@ -222,6 +254,9 @@ export default function App() {
   const sfLastClickedId = useRef(null)
   // Ref updated each render with the last-clicked sf section's list
   const sfImgListRef = useRef([])
+  // current drill-down path within the selected tower's subfolder tree ([] = tower root)
+  const [sfPath, setSfPath] = useState([])
+  const [mapPath, setMapPath] = useState(null) // path being sorted on the tower map (null = closed)
 
   // ── stable selection handlers (useCallback + refs → no re-creates on each render) ──
 
@@ -312,15 +347,15 @@ export default function App() {
   const clearKeySelection = useCallback(() => { setKeySelIds(new Set()); keyLastClickedId.current = null }, [])
   const clearSfSelection = useCallback(() => { setSfSelIds(new Set()); sfLastClickedId.current = null }, [])
 
-  // Clear selections when context changes
+  // Clear selections + reset drill path when the selected tower changes
   useEffect(() => { clearKeySelection() }, [expandedTowerId, clearKeySelection])
-  useEffect(() => { clearSfSelection() }, [selectedTowerId, clearSfSelection])
+  useEffect(() => { clearSfSelection(); setSfPath([]) }, [selectedTowerId, clearSfSelection])
 
-  // Move sf-selected images to a subfolder (or tower root)
-  const moveSfSelectedToSubfolder = (sf) => {
+  // Move sf-selected images to an arbitrary sub-path within the selected tower
+  const moveSfSelectedToPath = (path) => {
     setImages(prev => prev.map(img =>
       sfSelIds.has(img.id)
-        ? { ...img, towerId: selectedTower.id, subfolder: sf }
+        ? { ...img, towerId: selectedTower.id, subPath: path }
         : img
     ))
     clearSfSelection()
@@ -383,7 +418,7 @@ export default function App() {
 
   const moveSelectedToTower = (towerId) => {
     setImages(prev => prev.map(img =>
-      selectedImgIds.has(img.id) ? { ...img, towerId, subfolder: null } : img
+      selectedImgIds.has(img.id) ? { ...img, towerId, subPath: [] } : img
     ))
     clearSelection()
   }
@@ -391,9 +426,13 @@ export default function App() {
   // ---------- more derived (all lists sorted number-wise by filename) ----------
   const imagesByTower = (tid) => images.filter((i) => i.towerId === tid).sort(byName)
   const unsortedOfTower = (tid) =>
-    images.filter((i) => i.towerId === tid && i.subfolder === null).sort(byName)
-  const imagesInSubfolder = (tid, sf) =>
-    images.filter((i) => i.towerId === tid && i.subfolder === sf).sort(byName)
+    images.filter((i) => i.towerId === tid && subPathOf(i).length === 0).sort(byName)
+  // images that sit EXACTLY at a path (unsorted at that level)
+  const imagesAtPath = (tid, path) =>
+    images.filter((i) => i.towerId === tid && pathEq(subPathOf(i), path)).sort(byName)
+  // count of everything inside the subtree at `path` (this folder + all descendants)
+  const imagesUnderPath = (tid, path) =>
+    images.filter((i) => i.towerId === tid && pathUnder(subPathOf(i), path)).length
 
   const selectedTower = towers.find((t) => t.id === selectedTowerId) || null
 
@@ -429,7 +468,7 @@ export default function App() {
     setImages((prev) =>
       prev.map((img) =>
         img.towerId && !validIds.has(img.towerId)
-          ? { ...img, towerId: null, subfolder: null }
+          ? { ...img, towerId: null, subPath: [] }
           : img
       )
     )
@@ -455,7 +494,7 @@ export default function App() {
         url: URL.createObjectURL(file),
         file,
         towerId: null,
-        subfolder: null,
+        subPath: [],
       }))
       allChunks.push(...chunk)
       idx += slice.length
@@ -477,11 +516,11 @@ export default function App() {
   const patch = (id, changes) =>
     setImages((prev) => prev.map((i) => (i.id === id ? { ...i, ...changes } : i)))
 
-  const moveToTower = (id, towerId) => patch(id, { towerId, subfolder: null })
-  const moveToPool = (id) => patch(id, { towerId: null, subfolder: null })
-  const moveToSubfolder = (id, towerId, subfolder) =>
-    patch(id, { towerId, subfolder })
-  const moveToTowerRoot = (id, towerId) => patch(id, { towerId, subfolder: null })
+  const moveToTower = (id, towerId) => patch(id, { towerId, subPath: [] })
+  const moveToPool = (id) => patch(id, { towerId: null, subPath: [] })
+  const moveToTowerRoot = (id, towerId) => patch(id, { towerId, subPath: [] })
+  // move an image to an arbitrary sub-path within a tower
+  const moveToPath = (id, towerId, subPath) => patch(id, { towerId, subPath })
 
   // Build the full list of files to export, with their folder path + final name.
   // towerIds: optional Set limiting which towers to include (default = all).
@@ -524,22 +563,28 @@ export default function App() {
     let missing = 0
     for (const t of towers) {
       if (towerIds && !towerIds.has(t.id)) continue
-      if (imagesByTower(t.id).length === 0) continue
+      const towerImgs = imagesByTower(t.id)
+      if (towerImgs.length === 0) continue
       const towerName = towerFolderName(t)
-      const unsorted = imagesByTower(t.id).filter(i => !i.subfolder)
-      const usedRoot = new Set()
-      unsorted.forEach((img, idx) => {
-        if (!hasFile(img)) { missing++; return }
-        entries.push({ dirParts: [rootName, towerName], filename: uniqueName(usedRoot, imgName(img, towerName, null, idx)), file: img.file, id: img.id })
+
+      // group tower images by their subPath (any depth) — empty folders skipped
+      const groups = new Map() // key → { path, imgs }
+      towerImgs.forEach(img => {
+        const p = subPathOf(img)
+        const key = JSON.stringify(p)
+        if (!groups.has(key)) groups.set(key, { path: p, imgs: [] })
+        groups.get(key).imgs.push(img)
       })
-      for (const sf of subfolders) {
-        const inSf = imagesInSubfolder(t.id, sf)
-        if (inSf.length === 0) continue
-        const subName = `${towerName}_${slug(sf)}`
-        const usedSub = new Set()
-        inSf.forEach((img, idx) => {
+
+      for (const { path, imgs } of groups.values()) {
+        // root / tower / [tower_seg0] / seg1 / seg2 …  (level-1 keeps tower prefix)
+        const dirParts = [rootName, towerName]
+        path.forEach((seg, i) => dirParts.push(i === 0 ? `${towerName}_${slug(seg)}` : slug(seg)))
+        const sfLabel = path.length ? path[path.length - 1] : null
+        const used = new Set()
+        imgs.forEach((img, idx) => {
           if (!hasFile(img)) { missing++; return }
-          entries.push({ dirParts: [rootName, towerName, subName], filename: uniqueName(usedSub, imgName(img, towerName, sf, idx)), file: img.file, id: img.id })
+          entries.push({ dirParts, filename: uniqueName(used, imgName(img, towerName, sfLabel, idx)), file: img.file, id: img.id })
         })
       }
     }
@@ -1045,7 +1090,7 @@ export default function App() {
                       <button
                         className="tower-map-btn"
                         title={`Sort ${t.label}'s unsorted images on map`}
-                        onClick={(e) => { e.stopPropagation(); setShowMap(false); setSelectedTowerId(t.id); setMapTowerId(t.id) }}
+                        onClick={(e) => { e.stopPropagation(); setShowMap(false); setSelectedTowerId(t.id); setMapTowerId(t.id); setMapPath([]) }}
                       >
                         🗺
                       </button>
@@ -1108,7 +1153,7 @@ export default function App() {
                               className="move-bar-btn danger"
                               onClick={() => {
                                 setImages(prev => prev.map(img =>
-                                  keySelIds.has(img.id) ? { ...img, towerId: null, subfolder: null } : img
+                                  keySelIds.has(img.id) ? { ...img, towerId: null, subPath: [] } : img
                                 ))
                                 clearKeySelection()
                               }}
@@ -1116,13 +1161,13 @@ export default function App() {
                             >
                               ⬅ Folder 1
                             </button>
-                            {subfolders.map(sf => (
+                            {childrenAtPath(subTree, []).map(sf => (
                               <button
                                 key={sf}
                                 className="move-bar-btn"
                                 onClick={() => {
                                   setImages(prev => prev.map(img =>
-                                    keySelIds.has(img.id) ? { ...img, towerId: t.id, subfolder: sf } : img
+                                    keySelIds.has(img.id) ? { ...img, towerId: t.id, subPath: [sf] } : img
                                   ))
                                   clearKeySelection()
                                 }}
@@ -1156,132 +1201,112 @@ export default function App() {
 
           {!selectedTower ? (
             <div className="empty">Select a tower to sort its images.</div>
-          ) : (
+          ) : (() => {
+            const here = imagesAtPath(selectedTower.id, sfPath)   // images unsorted at this level
+            const childNames = childrenAtPath(subTree, sfPath)
+            const atRoot = sfPath.length === 0
+            const hereLabel = atRoot ? selectedTower.label : sfPath[sfPath.length - 1]
+            return (
             <>
-              {/* remaining (unsorted) images of the selected tower */}
-              {(() => {
-                const unsorted = unsortedOfTower(selectedTower.id)
-                const allSfImgs = [...unsorted, ...subfolders.flatMap(sf => imagesInSubfolder(selectedTower.id, sf))]
-                return (
-                  <div
-                    className={'remaining' + over('remaining')}
-                    {...zone('remaining')}
-                    onDrop={(e) => {
-                      e.preventDefault()
-                      endDrag()
-                      moveToTowerRoot(getDragId(e), selectedTower.id)
-                    }}
-                  >
-                    <div className="sub-title">
-                      Remaining in {selectedTower.label}
-                      <span className="badge">{unsorted.length}</span>
-                      {unsorted.length > 0 && (
-                        <>
-                          <button className="sel-btn" style={{ marginLeft: 'auto', fontSize: 11 }}
-                            onClick={() => setSfSelIds(new Set(unsorted.map(i => i.id)))}>
-                            Select All
-                          </button>
-                        </>
-                      )}
-                    </div>
-                    {unsorted.length > 0 && sfSelIds.size > 0 && unsorted.some(i => sfSelIds.has(i.id)) && (
-                      <div className="sel-toolbar" style={{ marginBottom: 4 }}>
-                        <span className="sel-count">
-                          {unsorted.filter(i => sfSelIds.has(i.id)).length} selected
-                        </span>
-                        <button className="sel-btn danger" onClick={clearSfSelection}>Clear</button>
-                      </div>
-                    )}
-                    <div className="tiles small">
-                      {/* update ref so shift-select works within this section */}
-                      {(sfImgListRef.current = unsorted, null)}
-                      {unsorted.map((img) => (
-                        <ImageTile
-                          key={img.id}
-                          img={img}
-                          selected={sfSelIds.has(img.id)}
-                          onSelect={toggleSfImgSelect}
-                          onDragStart={dragStart}
-                          onOpen={(im) => openPreview(im, unsorted, 'tower', selectedTower.id)}
-                        />
-                      ))}
-                      {unsorted.length === 0 && (
-                        <div className="empty tiny">All images sorted 🎉</div>
-                      )}
-                    </div>
-                  </div>
-                )
-              })()}
+              {/* breadcrumb navigator (toggle between levels) */}
+              <div className="sf-breadcrumb">
+                <button className="sf-crumb" onClick={() => { setSfPath([]); clearSfSelection() }}>{selectedTower.label}</button>
+                {sfPath.map((seg, i) => (
+                  <span key={i}>
+                    <span className="sf-crumb-sep">›</span>
+                    <button className="sf-crumb" onClick={() => { setSfPath(sfPath.slice(0, i + 1)); clearSfSelection() }}>{seg}</button>
+                  </span>
+                ))}
+                {!atRoot && (
+                  <button className="sf-up" onClick={() => { setSfPath(sfPath.slice(0, -1)); clearSfSelection() }} title="Go up one level">⬆ Up</button>
+                )}
+              </div>
 
-              {/* the template's subfolders */}
-              {subfolders.map((sf) => {
-                const inSf = imagesInSubfolder(selectedTower.id, sf)
+              {/* images sitting at THIS level (unsorted here) */}
+              <div
+                className={'remaining' + over('here')}
+                {...zone('here')}
+                onDrop={(e) => { e.preventDefault(); endDrag(); moveToPath(getDragId(e), selectedTower.id, sfPath) }}
+              >
+                <div className="sub-title">
+                  Remaining in {hereLabel}
+                  <span className="badge">{here.length}</span>
+                  {here.length > 0 && (
+                    <button className="sel-btn" style={{ marginLeft: 'auto', fontSize: 11 }}
+                      onClick={() => setSfSelIds(new Set(here.map(i => i.id)))}>Select All</button>
+                  )}
+                </div>
+                {here.length > 0 && sfSelIds.size > 0 && here.some(i => sfSelIds.has(i.id)) && (
+                  <div className="sel-toolbar" style={{ marginBottom: 4 }}>
+                    <span className="sel-count">{here.filter(i => sfSelIds.has(i.id)).length} selected</span>
+                    <button className="sel-btn danger" onClick={clearSfSelection}>Clear</button>
+                  </div>
+                )}
+                <div className="tiles small">
+                  {(sfImgListRef.current = here, null)}
+                  {here.map((img) => (
+                    <ImageTile
+                      key={img.id}
+                      img={img}
+                      selected={sfSelIds.has(img.id)}
+                      onSelect={toggleSfImgSelect}
+                      onDragStart={dragStart}
+                      onOpen={(im) => openPreview(im, here, 'subfolder', selectedTower.id)}
+                    />
+                  ))}
+                  {here.length === 0 && <div className="empty tiny">Nothing to sort here 🎉</div>}
+                </div>
+              </div>
+
+              {/* child folders available at this level */}
+              {childNames.map((sf) => {
+                const childPath = [...sfPath, sf]
+                const total = imagesUnderPath(selectedTower.id, childPath)
+                const unsortedHere = imagesAtPath(selectedTower.id, childPath).length
                 return (
                   <div
                     key={sf}
                     className={'subfolder' + over('sf:' + sf)}
                     {...zone('sf:' + sf)}
-                    onDrop={(e) => {
-                      e.preventDefault()
-                      endDrag()
-                      moveToSubfolder(getDragId(e), selectedTower.id, sf)
-                    }}
+                    onDrop={(e) => { e.preventDefault(); endDrag(); moveToPath(getDragId(e), selectedTower.id, childPath) }}
                   >
                     <div className="sub-title">
-                      <input type="checkbox" checked={inSf.length > 0} readOnly />
-                      {sf}
-                      <span className="badge">{inSf.length}</span>
-                      {inSf.length > 0 && (
-                        <button className="sel-btn" style={{ marginLeft: 'auto', fontSize: 11 }}
-                          onClick={() => setSfSelIds(new Set(inSf.map(i => i.id)))}>
-                          Select All
-                        </button>
+                      📁 {sf}
+                      <span className="badge">{total}</span>
+                      {unsortedHere > 0 && (
+                        <button className="tower-map-btn" title={`Sort ${sf} on map`}
+                          onClick={() => { setShowMap(false); setMapTowerId(selectedTower.id); setMapPath(childPath) }}>🗺</button>
                       )}
-                    </div>
-                    {inSf.length > 0 && sfSelIds.size > 0 && inSf.some(i => sfSelIds.has(i.id)) && (
-                      <div className="sel-toolbar" style={{ marginBottom: 4 }}>
-                        <span className="sel-count">
-                          {inSf.filter(i => sfSelIds.has(i.id)).length} selected
-                        </span>
-                        <button className="sel-btn danger" onClick={clearSfSelection}>Clear</button>
-                      </div>
-                    )}
-                    <div className="tiles small">
-                      {/* update ref so shift-select works within this section */}
-                      {(sfImgListRef.current = inSf, null)}
-                      {inSf.map((img) => (
-                        <ImageTile
-                          key={img.id}
-                          img={img}
-                          selected={sfSelIds.has(img.id)}
-                          onSelect={toggleSfImgSelect}
-                          onDragStart={dragStart}
-                          onOpen={(im) => openPreview(im, inSf, 'subfolder', selectedTower.id)}
-                        />
-                      ))}
+                      <button className="sf-open" onClick={() => { setSfPath(childPath); clearSfSelection() }}
+                        title="Open this subfolder">Open ▸</button>
                     </div>
                   </div>
                 )
               })}
 
-              {/* sticky move bar for subfolder-column selection */}
+              {/* sticky move bar — move selection to a child folder / up / Folder 1 */}
               {sfSelIds.size > 0 && (
                 <div className="move-bar">
                   <span className="move-bar-label">Move {sfSelIds.size} image(s) to:</span>
                   <div className="move-bar-towers">
-                    <button className="move-bar-btn" onClick={() => moveSfSelectedToSubfolder(null)}>
-                      Unsorted
-                    </button>
-                    {subfolders.map(sf => (
-                      <button key={sf} className="move-bar-btn" onClick={() => moveSfSelectedToSubfolder(sf)}>
-                        {sf}
-                      </button>
+                    <button className="move-bar-btn danger"
+                      onClick={() => {
+                        setImages(prev => prev.map(img => sfSelIds.has(img.id) ? { ...img, towerId: null, subPath: [] } : img))
+                        clearSfSelection()
+                      }}
+                      title="Send back to Folder 1">⬅ Folder 1</button>
+                    {!atRoot && (
+                      <button className="move-bar-btn" onClick={() => moveSfSelectedToPath(sfPath.slice(0, -1))}>⬅ up</button>
+                    )}
+                    {childNames.map(sf => (
+                      <button key={sf} className="move-bar-btn" onClick={() => moveSfSelectedToPath([...sfPath, sf])}>{sf}</button>
                     ))}
                   </div>
                 </div>
               )}
             </>
-          )}
+            )
+          })()}
         </section>
       </main>
 
@@ -1324,28 +1349,32 @@ export default function App() {
         />
       )}
 
-      {/* Tower map — plot a tower's images, move them into its subfolders */}
-      {mapTowerId && (() => {
+      {/* Tower map — plot images unsorted at the current drill path, move them
+          into that folder's child subfolders (any depth) */}
+      {mapTowerId && mapPath && (() => {
         const tower = towers.find(t => t.id === mapTowerId)
         if (!tower) return null
-        // map shows only the tower's UNSORTED images — once sorted into a
-        // subfolder, the dot disappears (that's the "remove from map" the user wants)
+        const path = mapPath
+        const childNames = childrenAtPath(subTree, path)
+        const crumb = [tower.label, ...path].join(' › ')
         const targets = [
           { id: '__pool__', label: '⬅ Folder 1' },
-          ...subfolders.map(sf => ({ id: 'sf:' + sf, label: sf, count: imagesInSubfolder(mapTowerId, sf).length })),
+          ...(path.length ? [{ id: '__up__', label: '⬅ up' }] : []),
+          ...childNames.map(sf => ({ id: 'sf:' + sf, label: sf, count: imagesUnderPath(mapTowerId, [...path, sf]) })),
         ]
         const onMove = (imgId, target) => {
           if (target === '__pool__') moveToPool(imgId)
-          else if (target.startsWith('sf:')) moveToSubfolder(imgId, mapTowerId, target.slice(3))
+          else if (target === '__up__') moveToPath(imgId, mapTowerId, path.slice(0, -1))
+          else if (target.startsWith('sf:')) moveToPath(imgId, mapTowerId, [...path, target.slice(3)])
         }
         return (
           <MapView
-            dotImages={unsortedOfTower(mapTowerId)}
+            dotImages={imagesAtPath(mapTowerId, path)}
             moveTargets={targets}
             onMove={onMove}
-            title={`🗺 Map Sort — ${tower.label}`}
+            title={`🗺 Map Sort — ${crumb}`}
             targetNoun="subfolder"
-            onClose={() => setMapTowerId(null)}
+            onClose={() => { setMapTowerId(null); setMapPath(null) }}
           />
         )
       })()}
@@ -1358,11 +1387,11 @@ export default function App() {
           onIndex={(i) => setPreview((p) => ({ ...p, index: i }))}
           onClose={() => setPreview(null)}
           towers={towers}
-          subfolders={subfolders}
+          subfolders={childrenAtPath(subTree, [])}
           context={preview.context}
           contextTowerId={preview.contextTowerId}
           onAssign={(imageId, towerId, sf) =>
-            sf ? moveToSubfolder(imageId, towerId, sf) : moveToTower(imageId, towerId)
+            sf ? moveToPath(imageId, towerId, [sf]) : moveToTower(imageId, towerId)
           }
           onMoveToPool={(imageId) => moveToPool(imageId)}
         />
@@ -1377,21 +1406,26 @@ function ProjectModal({ project, allTemplateNames, allTemplates, customTpls, onS
   const [tplName, setTplName] = useState(project.template || allTemplateNames[0])
   const slug = (s) => (s || '').trim().replace(/\s+/g, '_').replace(/[^\w-]/g, '')
   const pid = slug(id) || 'PRJ-ID'
-  const tplSubs = allTemplates[tplName] || []
+  const tplTree = normalizeTree(allTemplates[tplName] || [])
+  const topNames = tplTree.map(n => n.name)
   const tplCfg = customTpls.find(t => t.name === tplName)
   const towerKey = tplCfg?.towerPrefix?.trim() || 'T'   // template's tower key
   const towerEx = `${pid}_${towerKey}1`
 
-  // build a live preview: project ID → tower (template key) → subfolders
+  // build a live preview: project ID → tower (template key) → nested subfolders
+  const treeLines = (nodes, indent) =>
+    nodes.flatMap((n, i) => {
+      const last = i === nodes.length - 1
+      return [
+        `${indent}${last ? '└' : '├'}─ ${slug(n.name)}/`,
+        ...treeLines(n.children, indent + (last ? '   ' : '│  ')),
+      ]
+    })
   const previewLines = [
-    `${pid}.zip`,
-    `└─ ${pid}/`,
-    `   └─ ${towerEx}/`,
-    `      ├─ ${towerEx}_unsorted_001.jpg`,
-    ...tplSubs.flatMap((sf, i) => [
-      `      ${i < tplSubs.length - 1 ? '├' : '└'}─ ${towerEx}_${slug(sf)}/`,
-      `         └─ ${towerEx}_${slug(sf)}_001.jpg`,
-    ]),
+    `${pid}/`,
+    `└─ ${towerEx}/`,
+    `   ├─ ${towerEx}_unsorted_001.jpg`,
+    ...treeLines(tplTree, '   '),
   ].join('\n')
 
   return (
@@ -1426,7 +1460,7 @@ function ProjectModal({ project, allTemplateNames, allTemplates, customTpls, onS
             <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>
               Tower key: <b style={{ color: '#7ab3ff' }}>{towerKey}</b>
               {towerKey === 'T' && !tplCfg && ' (built-in default — create a custom template to change it)'}
-              {' · '}Subfolders: {tplSubs.join(' → ') || '(none)'}
+              {' · '}Subfolders: {topNames.join(' → ') || '(none)'}
             </div>
           </div>
 

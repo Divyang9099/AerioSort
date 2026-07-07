@@ -274,6 +274,54 @@ button { cursor: pointer; font-size: 14px; }
   margin-bottom: 6px;
 }
 
+/* ---------- SUB FOLDERS: breadcrumb drill-down navigator ---------- */
+.sf-breadcrumb {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.sf-crumb {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 2px 4px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.sf-crumb:hover { background: rgba(79,140,255,0.15); }
+.sf-crumb:last-of-type { color: var(--text); }
+.sf-crumb-sep { color: var(--muted); margin: 0 2px; font-size: 12px; }
+.sf-up {
+  margin-left: auto;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.sf-up:hover { border-color: var(--accent); }
+.sf-open {
+  margin-left: auto;
+  background: var(--accent-2);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.sf-open:hover { background: var(--accent); }
+
 /* ---------- MISC ---------- */
 .empty {
   color: var(--muted);
@@ -1091,6 +1139,25 @@ button { cursor: pointer; font-size: 14px; }
   margin-top: 4px;
 }
 .admin-add-sf:hover { border-color: var(--accent); color: var(--text); }
+.admin-sf-nest {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--accent);
+  border-radius: 6px;
+  padding: 4px 9px;
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.admin-sf-nest:hover { border-color: var(--accent); background: rgba(79,140,255,0.1); }
+.sf-tree { position: relative; }
+.sf-tree-node {
+  position: relative;
+  padding-left: 2px;
+  border-left: 1px dashed var(--line);
+  margin-bottom: 2px;
+}
+.sf-tree-node > .sf-tree { padding-top: 4px; }
 .admin-toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); cursor: pointer; }
 .admin-radio { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); margin-bottom: 6px; cursor: pointer; }
 .admin-hint { font-size: 11px; color: var(--muted); line-height: 1.6; margin-top: 6px; }

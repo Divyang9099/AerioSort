@@ -230,7 +230,7 @@ export default function Lightbox({
   const ctxTower = towers.find((t) => t.id === contextTowerId) || null
 
   const loc = img.towerId
-    ? `${img.towerId}${img.subfolder ? ' / ' + img.subfolder : ''}`
+    ? `${img.towerId}${img.subPath?.length ? ' / ' + img.subPath.join(' / ') : ''}`
     : 'Unsorted'
 
   return (
